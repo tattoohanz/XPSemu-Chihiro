@@ -1490,6 +1490,117 @@ static void compare_surfaces(SurfaceBinding const *a, SurfaceBinding const *b)
     #undef DO_CMP
 }
 
+/*
+ * XPSemu Chihiro: surfaces dropped for another shape at the same address
+ * ("other shape" downloads), for the game log (log only): the old and the new
+ * binding and the rule that refused to reuse the old one, the busiest four
+ * per 5 s window. Written on the PGRAPH thread under pgraph.lock.
+ */
+#define RESHAPE_MAX 12
+typedef struct {
+    bool color, swizzle;
+    unsigned int w, h, pitch, fmt, vk;
+} ReshapeSide;
+static struct {
+    bool used;
+    hwaddr addr;
+    ReshapeSide from, to;
+    const char *why;
+    uint32_t count, downloads;
+} reshape[RESHAPE_MAX];
+static QemuMutex reshape_lock;
+static bool reshape_init;
+
+static void reshape_side(ReshapeSide *s, SurfaceBinding const *b)
+{
+    s->color = b->color;
+    s->swizzle = b->swizzle;
+    s->w = b->width;
+    s->h = b->height;
+    s->pitch = b->pitch;
+    s->fmt = b->color ? b->shape.color_format : b->shape.zeta_format;
+    s->vk = b->host_fmt.vk_format;
+}
+
+static void reshape_note(SurfaceBinding const *old, SurfaceBinding const *new,
+                         const char *why, bool download)
+{
+    if (!reshape_init) {
+        qemu_mutex_init(&reshape_lock);
+        qatomic_set(&reshape_init, true);
+    }
+    ReshapeSide a, b;
+    reshape_side(&a, old);
+    reshape_side(&b, new);
+    qemu_mutex_lock(&reshape_lock);
+    int slot = -1;
+    for (int i = 0; i < RESHAPE_MAX; i++) {
+        if (!reshape[i].used) {
+            if (slot < 0) {
+                slot = i;
+            }
+        } else if (reshape[i].addr == old->vram_addr && reshape[i].why == why &&
+                   !memcmp(&reshape[i].from, &a, sizeof(a)) &&
+                   !memcmp(&reshape[i].to, &b, sizeof(b))) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot >= 0) {
+        if (!reshape[slot].used) {
+            reshape[slot].used = true;
+            reshape[slot].addr = old->vram_addr;
+            reshape[slot].from = a;
+            reshape[slot].to = b;
+            reshape[slot].why = why;
+        }
+        reshape[slot].count++;
+        reshape[slot].downloads += download;
+    }
+    qemu_mutex_unlock(&reshape_lock);
+}
+
+static int reshape_side_fmt(char *buf, size_t size, const ReshapeSide *s)
+{
+    return snprintf(buf, size, "%s %ux%u pitch %u fmt %u vk %u%s",
+                    s->color ? "color" : "zeta", s->w, s->h, s->pitch, s->fmt,
+                    s->vk, s->swizzle ? " swizzled" : "");
+}
+
+/* The game log's "other shape" line (UI thread), then forgotten. */
+void pgraph_vk_reshape_format(char *buf, size_t size)
+{
+    buf[0] = 0;
+    if (!qatomic_read(&reshape_init)) {
+        return;
+    }
+    qemu_mutex_lock(&reshape_lock);
+    size_t len = 0;
+    for (int shown = 0; shown < 4 && len < size; shown++) {
+        int best = -1;
+        for (int i = 0; i < RESHAPE_MAX; i++) {
+            if (reshape[i].used && reshape[i].count &&
+                (best < 0 || reshape[i].count > reshape[best].count)) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        char a[96], b[96];
+        reshape_side_fmt(a, sizeof(a), &reshape[best].from);
+        reshape_side_fmt(b, sizeof(b), &reshape[best].to);
+        len += snprintf(buf + len, size - len,
+                        "%s%08" PRIx64 " %s -> %s (%s) %u times, %u downloads",
+                        len ? "; " : "", (uint64_t)reshape[best].addr, a, b,
+                        reshape[best].why, reshape[best].count,
+                        reshape[best].downloads);
+        reshape[best].count = 0;
+    }
+    memset(reshape, 0, sizeof(reshape));
+    qemu_mutex_unlock(&reshape_lock);
+}
+
 static void populate_surface_binding_target_sized(NV2AState *d, bool color,
                                                   unsigned int width,
                                                   unsigned int height,
@@ -1639,6 +1750,13 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
         if (surface != NULL) {
             bool is_compatible =
                 check_surface_compatibility(surface, &target, false);
+            /* XPSemu Chihiro: which rule refused it (log only) */
+            const char *reshape_why =
+                is_compatible ? NULL :
+                (surface->color != target.color) ? "color/zeta" :
+                (surface->host_fmt.vk_format != target.host_fmt.vk_format) ?
+                    "format" :
+                (surface->pitch != target.pitch) ? "pitch" : "new is bigger";
 
             void (*trace_fn)(uint32_t addr, uint32_t width, uint32_t height,
                              const char *layout, uint32_t anti_aliasing,
@@ -1682,11 +1800,17 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 hwaddr zeta_end = zeta_entry.vram_addr + zeta_entry.size;
                 is_compatible &= surface->vram_addr >= zeta_end ||
                                  zeta_entry.vram_addr >= color_end;
+                if (!is_compatible) {
+                    reshape_why = "smaller color over the depth buffer";
+                }
             }
 
             if (is_compatible && !color && r->color_binding) {
                 is_compatible &= (surface->width == r->color_binding->width) &&
                                  (surface->height == r->color_binding->height);
+                if (!is_compatible) {
+                    reshape_why = "depth size != color size";
+                }
             }
 
             if (is_compatible) {
@@ -1704,6 +1828,9 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
+                reshape_note(surface, &target,
+                             reshape_why ? reshape_why : "?",
+                             surface->draw_dirty);
                 PGRAPH_VK_DL_CAUSE(
                     PGRAPH_VK_DL_INCOMPAT,
                     pgraph_vk_surface_download_if_dirty(d, surface));
