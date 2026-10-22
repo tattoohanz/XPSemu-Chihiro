@@ -555,6 +555,7 @@ extern int pgraph_vk_dl_cause;
  * rendered surfaces the Xbox CPU touched, since the last call. */
 void pgraph_vk_dl_causes_format(char *buf, size_t size);
 void pgraph_vk_cpu_touch_format(char *buf, size_t size);
+void pgraph_vk_reshape_format(char *buf, size_t size);
 #define PGRAPH_VK_DL_CAUSE(c, stmt)              \
     do {                                         \
         int dl_saved_ = pgraph_vk_dl_cause;      \
