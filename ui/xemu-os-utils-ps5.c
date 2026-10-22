@@ -854,8 +854,9 @@ static struct {
 static int env_count;
 
 char *__real_getenv(const char *name);
-char *__wrap_getenv(const char *name);
-char *__wrap_getenv(const char *name)
+/* Hidden: the title must not export it (ps5-native-tool refuses exports). */
+__attribute__((visibility("hidden"))) char *__wrap_getenv(const char *name);
+__attribute__((visibility("hidden"))) char *__wrap_getenv(const char *name)
 {
     for (int i = 0; name && i < env_count; i++) {
         if (!strcmp(env_table[i].name, name)) {

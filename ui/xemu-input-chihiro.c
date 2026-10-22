@@ -26,6 +26,7 @@
  */
 
 #include "qemu/osdep.h"
+#include <math.h>
 #include "xemu-input.h"
 #include "xemu-settings.h"
 #include "hw/xbox/chihiro/chihiro.h"

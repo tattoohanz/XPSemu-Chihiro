@@ -117,6 +117,8 @@ missing_libc=(mkstemp isatty umask pathconf fnmatch getnameinfo gai_strerror
         radv_link_flags+=("--defsym=$name=xemu_ps5_$name")
         printf '        %s;\n' "$name"
     done
+    # XPSemu Chihiro: env.txt's getenv wrapper stays the title's own.
+    printf '        __wrap_getenv;\n'
     printf '};\n'
 } > "$work/libc-missing-local.map"
 radv_link_flags+=(--version-script "$work/libc-missing-local.map")
