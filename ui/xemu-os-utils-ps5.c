@@ -849,6 +849,10 @@ static const char kEnvTemplate[] =
     "# 0 = wait as before)\n"
     "XEMU_DEPTH_READ_LAG=1\n"
     "#\n"
+    "# A depth buffer larger than the color target serves it as it is\n"
+    "# (Ollie King's smaller passes; 0 = drop and recreate it as before)\n"
+    "XEMU_ZETA_REUSE_LARGER=1\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 

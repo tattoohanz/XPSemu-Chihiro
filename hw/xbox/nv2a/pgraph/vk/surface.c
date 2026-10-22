@@ -1601,6 +1601,16 @@ void pgraph_vk_reshape_format(char *buf, size_t size)
     qemu_mutex_unlock(&reshape_lock);
 }
 
+static bool zeta_reuse_larger(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("XEMU_ZETA_REUSE_LARGER");
+        on = !(e && e[0] == '0');
+    }
+    return on;
+}
+
 static void populate_surface_binding_target_sized(NV2AState *d, bool color,
                                                   unsigned int width,
                                                   unsigned int height,
@@ -1805,9 +1815,26 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 }
             }
 
+            bool zeta_larger = false;
             if (is_compatible && !color && r->color_binding) {
-                is_compatible &= (surface->width == r->color_binding->width) &&
-                                 (surface->height == r->color_binding->height);
+                bool same_size =
+                    (surface->width == r->color_binding->width) &&
+                    (surface->height == r->color_binding->height);
+                /* XPSemu Chihiro: a depth buffer larger than the color
+                 * target serves it as it is. The check above already made
+                 * sure address, pitch and format are the same and that it
+                 * is at least as big as the target, so the target's depth
+                 * is its top-left part in guest memory too; the framebuffer
+                 * takes the color target's size, which a larger attachment
+                 * allows. Ollie King renders each frame at 640x480, 512x384
+                 * and 256x192 over one depth buffer, and every change of
+                 * size dropped it (GPU wait, readback, upload): four times
+                 * a frame, 40-50 FPS. XEMU_ZETA_REUSE_LARGER=0 turns it off.
+                 */
+                zeta_larger = !same_size && zeta_reuse_larger() &&
+                              surface->width >= r->color_binding->width &&
+                              surface->height >= r->color_binding->height;
+                is_compatible &= same_size || zeta_larger;
                 if (!is_compatible) {
                     reshape_why = "depth size != color size";
                 }
@@ -1815,12 +1842,17 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
 
             if (is_compatible) {
                 // FIXME: Refactor
-                pg->surface_binding_dim.width = surface->width;
-                pg->surface_binding_dim.clip_x = surface->shape.clip_x;
-                pg->surface_binding_dim.clip_width = surface->shape.clip_width;
-                pg->surface_binding_dim.height = surface->height;
-                pg->surface_binding_dim.clip_y = surface->shape.clip_y;
-                pg->surface_binding_dim.clip_height = surface->shape.clip_height;
+                /* the color target's size stays the framebuffer's */
+                if (!zeta_larger) {
+                    pg->surface_binding_dim.width = surface->width;
+                    pg->surface_binding_dim.clip_x = surface->shape.clip_x;
+                    pg->surface_binding_dim.clip_width =
+                        surface->shape.clip_width;
+                    pg->surface_binding_dim.height = surface->height;
+                    pg->surface_binding_dim.clip_y = surface->shape.clip_y;
+                    pg->surface_binding_dim.clip_height =
+                        surface->shape.clip_height;
+                }
                 surface->upload_pending |= mem_dirty;
                 pg->surface_zeta.buffer_dirty |= color;
                 should_create = false;
