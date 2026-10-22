@@ -857,6 +857,10 @@ static const char kEnvTemplate[] =
     "# (OutRun 2's reflections; 0 = read the faces back to RAM as before)\n"
     "XEMU_CUBE_FROM_SURFACES=1\n"
     "#\n"
+    "# A plain copy between two rendered color buffers is done on the PS5 GPU\n"
+    "# (OutRun 2's effect buffers; 0 = every image blit on the CPU as before)\n"
+    "XEMU_GPU_BLIT=1\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 
