@@ -1137,6 +1137,31 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     }
 
     if (!surface_to_texture) {
+        /* XPSemu Chihiro: a texture in rendered memory (log only, game log
+         * "textures"): the texture, the surface starting at its address and
+         * why it could not be used directly, the rendered surface it reads */
+        SurfaceBinding *dirty = pgraph_vk_dirty_surface_in_range(
+            pg, texture_vram_offset, texture_length);
+        if (dirty) {
+            char at_desc[96], dirty_desc[96];
+            pgraph_vk_diag_surface(at_desc, sizeof(at_desc), surface);
+            pgraph_vk_diag_surface(dirty_desc, sizeof(dirty_desc), dirty);
+            const char *why =
+                !surface ? "no surface starts there" :
+                state.levels != 1 ? "mipmapped" :
+                state.cubemap ? "cubemap" :
+                (!surface->swizzle && surface->pitch != state.pitch) ?
+                    "pitch" :
+                (surface->width != state.width ||
+                 surface->height != state.height) ? "size" : "format";
+            pgraph_vk_diag_note(
+                &pgraph_vk_diag_tex,
+                "tex %08" PRIx64 " %ux%u fmt %u pitch %u levels %u len %u; "
+                "at it: %s (%s); reads: %s",
+                (uint64_t)texture_vram_offset, state.width, state.height,
+                state.color_format, state.pitch, state.levels,
+                (unsigned)texture_length, at_desc, why, dirty_desc);
+        }
         // FIXME: Restructure to support rendering surfaces to cubemap faces
 
         // Writeback any surfaces which this texture may index

@@ -1601,6 +1601,105 @@ void pgraph_vk_reshape_format(char *buf, size_t size)
     qemu_mutex_unlock(&reshape_lock);
 }
 
+PGRAPHVkDiag pgraph_vk_diag_blit, pgraph_vk_diag_tex;
+
+void pgraph_vk_diag_note(PGRAPHVkDiag *t, const char *fmt, ...)
+{
+    if (!qatomic_read(&t->init)) {
+        qemu_mutex_init(&t->lock);
+        qatomic_set(&t->init, 1);
+    }
+    char key[sizeof(t->e[0].key)];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(key, sizeof(key), fmt, ap);
+    va_end(ap);
+
+    qemu_mutex_lock(&t->lock);
+    int slot = -1;
+    for (int i = 0; i < PGRAPH_VK_DIAG_SLOTS; i++) {
+        if (!t->e[i].n) {
+            if (slot < 0) {
+                slot = i;
+            }
+        } else if (!strcmp(t->e[i].key, key)) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot >= 0) {
+        if (!t->e[slot].n) {
+            memcpy(t->e[slot].key, key, sizeof(key));
+        }
+        t->e[slot].n++;
+    }
+    qemu_mutex_unlock(&t->lock);
+}
+
+/* The busiest four since the last call (UI thread), then forgotten. */
+void pgraph_vk_diag_format(PGRAPHVkDiag *t, char *buf, size_t size)
+{
+    buf[0] = 0;
+    if (!qatomic_read(&t->init)) {
+        return;
+    }
+    qemu_mutex_lock(&t->lock);
+    size_t len = 0;
+    for (int shown = 0; shown < 4 && len < size; shown++) {
+        int best = -1;
+        for (int i = 0; i < PGRAPH_VK_DIAG_SLOTS; i++) {
+            if (t->e[i].n && (best < 0 || t->e[i].n > t->e[best].n)) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        len += snprintf(buf + len, size - len, "%s%s: %u times",
+                        len ? "; " : "", t->e[best].key, t->e[best].n);
+        t->e[best].n = 0;
+    }
+    memset(t->e, 0, sizeof(t->e));
+    qemu_mutex_unlock(&t->lock);
+}
+
+void pgraph_vk_diag_surface(char *buf, size_t size, const SurfaceBinding *s)
+{
+    if (!s) {
+        snprintf(buf, size, "no surface");
+        return;
+    }
+    snprintf(buf, size, "%s %08" PRIx64 " %ux%u pitch %u fmt %u%s%s",
+             s->color ? "color" : "zeta", (uint64_t)s->vram_addr, s->width,
+             s->height, s->pitch,
+             s->color ? s->shape.color_format : s->shape.zeta_format,
+             s->swizzle ? " swizzled" : "", s->draw_dirty ? " rendered" : "");
+}
+
+SurfaceBinding *pgraph_vk_dirty_surface_in_range(PGRAPHState *pg, hwaddr start,
+                                                 hwaddr size)
+{
+    PGRAPHVkState *r = pg->vk_renderer_state;
+    SurfaceBinding *surface;
+    QTAILQ_FOREACH(surface, &r->surfaces, entry) {
+        if (surface->draw_dirty &&
+            check_surface_overlaps_range(surface, start, size)) {
+            return surface;
+        }
+    }
+    return NULL;
+}
+
+void pgraph_vk_diag_blit_format(char *buf, size_t size)
+{
+    pgraph_vk_diag_format(&pgraph_vk_diag_blit, buf, size);
+}
+
+void pgraph_vk_diag_tex_format(char *buf, size_t size)
+{
+    pgraph_vk_diag_format(&pgraph_vk_diag_tex, buf, size);
+}
+
 static bool zeta_reuse_larger(void)
 {
     static int on = -1;
