@@ -529,6 +529,32 @@ VkDeviceSize pgraph_vk_update_vertex_inline_buffer(PGRAPHState *pg, void **data,
 void pgraph_vk_init_surfaces(PGRAPHState *pg);
 void pgraph_vk_finalize_surfaces(PGRAPHState *pg);
 void pgraph_vk_surface_flush(NV2AState *d);
+/* XPSemu Chihiro: why surfaces are copied back to guest RAM, counted for the
+ * game log (log only). Each download site sets pgraph_vk_dl_cause around its
+ * call; all of them run on the PGRAPH thread. */
+enum {
+    PGRAPH_VK_DL_OTHER,
+    PGRAPH_VK_DL_CPU,       /* the Xbox CPU touched a rendered surface */
+    PGRAPH_VK_DL_SYNC,      /* all dirty surfaces (sync, save) */
+    PGRAPH_VK_DL_BLIT_SRC,  /* image blit reads a rendered surface */
+    PGRAPH_VK_DL_BLIT_DST,  /* image blit writes part of one */
+    PGRAPH_VK_DL_TEXTURE,   /* a texture overlaps a rendered surface */
+    PGRAPH_VK_DL_VERTEX,    /* vertex data overlaps a rendered surface */
+    PGRAPH_VK_DL_OVERLAP,   /* a new surface overlaps an old one */
+    PGRAPH_VK_DL_INCOMPAT,  /* same address, other shape or format */
+    PGRAPH_VK_DL_OLD,       /* unused for a while */
+    PGRAPH_VK_DL_FLUSH,
+    PGRAPH_VK_DL__COUNT
+};
+extern int pgraph_vk_dl_cause;
+#define PGRAPH_VK_DL_CAUSE(c, stmt)              \
+    do {                                         \
+        int dl_saved_ = pgraph_vk_dl_cause;      \
+        pgraph_vk_dl_cause = (c);                \
+        stmt;                                    \
+        pgraph_vk_dl_cause = dl_saved_;          \
+    } while (0)
+
 void pgraph_vk_process_pending_downloads(NV2AState *d);
 void pgraph_vk_surface_download_if_dirty(NV2AState *d, SurfaceBinding *surface);
 SurfaceBinding *pgraph_vk_surface_get_within(NV2AState *d, hwaddr addr);

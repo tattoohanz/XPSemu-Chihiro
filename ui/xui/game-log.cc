@@ -39,6 +39,8 @@
 #ifdef __PROSPERO__
 extern "C" int sceKernelAvailableFlexibleMemorySize(size_t *available);
 extern "C" int xemu_ps5_threads_made;
+// XPSemu Chihiro: surface downloads by cause (hw/xbox/nv2a/pgraph/vk/surface.c)
+extern "C" void pgraph_vk_dl_causes_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -238,6 +240,10 @@ void GameLogStart(const GameLogInfo &info)
          "  draws, shaders compiled (+ found in the SPIR-V cache), pipelines "
          "built, surfaces down/up loaded, textures uploaded, waits for the "
          "PS5 GPU\n"
+         "  (XPSemu Chihiro) and when surfaces were copied back: downloads "
+         "by cause - the Xbox CPU touching one, an image blit reading or "
+         "partly writing one, a texture or vertices in its memory, a new "
+         "surface overlapping it, sync\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -443,6 +449,14 @@ void GameLogTick()
              c[NV2A_PROF_TEX_UPLOAD], waits,
              __atomic_load_n(&xemu_ps5_threads_made, __ATOMIC_RELAXED));
     Write(buf);
+
+    char causes[256];
+    pgraph_vk_dl_causes_format(causes, sizeof(causes));
+    if (causes[0]) {
+        snprintf(buf, sizeof(buf), "           downloads by cause: %s\n",
+                 causes);
+        Write(buf);
+    }
 
     // The stopwatches (hw/xbox/xemu-timing.h): ms per second, and times.
     double ms[XT__COUNT];

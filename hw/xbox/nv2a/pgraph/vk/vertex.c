@@ -47,7 +47,9 @@ void pgraph_vk_update_vertex_ram_buffer(PGRAPHState *pg, hwaddr offset,
 {
     PGRAPHVkState *r = pg->vk_renderer_state;
 
-    pgraph_vk_download_surfaces_in_range_if_dirty(pg, offset, size);
+    PGRAPH_VK_DL_CAUSE(
+        PGRAPH_VK_DL_VERTEX,
+        pgraph_vk_download_surfaces_in_range_if_dirty(pg, offset, size));
 
     size_t start_bit = offset / TARGET_PAGE_SIZE;
     size_t end_bit = TARGET_PAGE_ALIGN(offset + size) / TARGET_PAGE_SIZE;
