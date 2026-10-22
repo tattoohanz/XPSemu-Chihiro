@@ -17,9 +17,17 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "qemu/osdep.h"
+#include "qemu/atomic.h"
 #include "chihiro-driveboard-sega838.h"
+#include "chihiro-cabinet.h"
 
 DriveBoardState *chihiro_driveboard_global = NULL;
+
+/* XPSemu Chihiro: what the game sent the board (log only, the game log's
+ * "drive board" line): commands by wire byte, and the strongest movement in
+ * the packages it played. */
+static uint32_t diag_cmds[128];
+static uint32_t diag_play_max;
 
 static void driveboard_push_response(DriveBoardState *db, uint8_t val)
 {
@@ -49,6 +57,7 @@ void driveboard_receive_byte(DriveBoardState *db, uint8_t byte)
     uint8_t cmd = db->tx_buf[0] & 0x7F;
     uint8_t p1  = db->tx_buf[1];
     uint8_t p2  = db->tx_buf[2];
+    qatomic_inc(&diag_cmds[cmd]);
 
     switch (cmd) {
     /* --- init / handshake --- The reply is the board status (bits 0-2,
@@ -143,6 +152,12 @@ void driveboard_receive_byte(DriveBoardState *db, uint8_t byte)
         db->play_pkg = (int8_t)(p2 & 0x0F);
         db->play_pos = 0;
         db->play_sub = 0;
+        for (int i = 0; i < 16; i++) {
+            uint32_t pw = db->sud_pkg[db->play_pkg][i] & 0x7F;
+            if (pw > qatomic_read(&diag_play_max)) {
+                qatomic_set(&diag_play_max, pw);
+            }
+        }
         driveboard_push_response(db, 0x00);
         break;
 
@@ -239,4 +254,37 @@ void driveboard_get_ffb(DriveBoardState *db, DriveBoardFFB *out)
     /* Per A.Geezer the SUD packages are OR2's real tactile feedback. */
     out->event_power = power;  /* this frame's package movement */
     out->event_dir = dir;
+}
+
+/* The game log's line for a Sega 838 cabinet, "" for any other: the board's
+ * state now, then the commands since the last call ("FB:3" = three package
+ * playbacks) and the strongest movement in the packages played. */
+void driveboard_diag_format(char *buf, size_t size)
+{
+    DriveBoardState *db = chihiro_driveboard_global;
+    buf[0] = '\0';
+    if (!db || chihiro_cabinet_drive_board() != CHIHIRO_DRIVE_SEGA838) {
+        return;
+    }
+    size_t n = snprintf(buf, size,
+                        "motor %s, power %02X, spring %s, damper %02X, "
+                        "torque %02X, vibration %02X; commands",
+                        db->motor_active ? "on" : "off", db->global_power,
+                        db->spring_active ? "on" : "off", db->damper_level,
+                        db->friction_power, db->vibration_power);
+    bool any = false;
+    for (int i = 0; i < 128 && n < size; i++) {
+        uint32_t c = qatomic_xchg(&diag_cmds[i], 0);
+        if (c) {
+            n += snprintf(buf + n, size - n, " %02X:%u", i | 0x80, c);
+            any = true;
+        }
+    }
+    if (n < size) {
+        n += snprintf(buf + n, size - n, "%s", any ? "" : " none");
+    }
+    uint32_t pm = qatomic_xchg(&diag_play_max, 0);
+    if (pm && n < size) {
+        snprintf(buf + n, size - n, "; packages up to %02X", pm);
+    }
 }
