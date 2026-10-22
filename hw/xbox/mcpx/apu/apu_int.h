@@ -32,6 +32,7 @@
 #include "migration/vmstate.h"
 #include "qemu/main-loop.h"
 #include "qemu/thread.h"
+#include "qemu/timer.h"
 #include "system/runstate.h"
 #include "ui/xemu-settings.h"
 
@@ -134,5 +135,12 @@ void mcpx_debug_end_frame(void);
 void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp);
 void mcpx_apu_monitor_finalize(MCPXAPUState *d);
 void mcpx_apu_monitor_frame(MCPXAPUState *d);
+
+/* XPSemu Chihiro: APU timing diagnostic, a line in xemu.log every 5 s
+ * (apu.c). The guest's MMIO paths take the APU lock through this, so the
+ * report says how long the Xbox CPU waited for the APU thread. */
+void mcpx_apu_mmio_lock(MCPXAPUState *d);
+/* The GP/EP DSP of this frame ran this many cycles before halting. */
+void mcpx_apu_stats_dsp(bool ep, uint32_t cycles, int64_t us);
 
 #endif

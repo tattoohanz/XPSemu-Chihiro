@@ -216,6 +216,75 @@ static void throttle(MCPXAPUState *d)
     }
 }
 
+/*
+ * XPSemu Chihiro: APU timing diagnostic. Every 5 s one line: audio frames
+ * made per second (1500 is real time: 32 samples at 48 kHz), how busy the
+ * APU thread was, the slowest frame, the most GP/EP DSP cycles and time in
+ * one frame, and how often and how long the Xbox CPU waited for the APU
+ * lock (MMIO). All under d->lock.
+ */
+static struct {
+    int64_t window_start_us;
+    uint64_t frames, waits;
+    int64_t wait_ns, wait_max_ns, frame_max_us, work_us;
+    uint32_t gp_max_cycles, ep_max_cycles;
+    int64_t gp_max_us, ep_max_us;
+} apu_stats;
+
+void mcpx_apu_mmio_lock(MCPXAPUState *d)
+{
+    int64_t t0 = get_clock();
+    qemu_mutex_lock(&d->lock);
+    int64_t waited = get_clock() - t0;
+    apu_stats.waits++;
+    apu_stats.wait_ns += waited;
+    if (waited > apu_stats.wait_max_ns) {
+        apu_stats.wait_max_ns = waited;
+    }
+}
+
+void mcpx_apu_stats_dsp(bool ep, uint32_t cycles, int64_t us)
+{
+    if (ep) {
+        apu_stats.ep_max_cycles = MAX(apu_stats.ep_max_cycles, cycles);
+        apu_stats.ep_max_us = MAX(apu_stats.ep_max_us, us);
+    } else {
+        apu_stats.gp_max_cycles = MAX(apu_stats.gp_max_cycles, cycles);
+        apu_stats.gp_max_us = MAX(apu_stats.gp_max_us, us);
+    }
+}
+
+static void apu_stats_frame(int64_t start_us, int64_t end_us)
+{
+    int64_t frame_us = end_us - start_us;
+    apu_stats.frames++;
+    apu_stats.work_us += frame_us;
+    if (frame_us > apu_stats.frame_max_us) {
+        apu_stats.frame_max_us = frame_us;
+    }
+    if (!apu_stats.window_start_us) {
+        apu_stats.window_start_us = end_us;
+        return;
+    }
+    int64_t window_us = end_us - apu_stats.window_start_us;
+    if (window_us < 5000000) {
+        return;
+    }
+    fprintf(stderr,
+            "APU: %.0f frames/s (1500 = real time), busy %.0f%%, slowest frame "
+            "%.1f ms, GP max %u cycles %.1f ms, EP max %u cycles %.1f ms, "
+            "CPU waited %lu times %.0f ms (longest %.1f ms), DSP %s\n",
+            apu_stats.frames * 1e6 / window_us,
+            apu_stats.work_us * 100.0 / window_us,
+            apu_stats.frame_max_us / 1000.0, apu_stats.gp_max_cycles,
+            apu_stats.gp_max_us / 1000.0, apu_stats.ep_max_cycles,
+            apu_stats.ep_max_us / 1000.0, (unsigned long)apu_stats.waits,
+            apu_stats.wait_ns / 1e6, apu_stats.wait_max_ns / 1e6,
+            g_config.audio.use_dsp ? "on" : "off");
+    memset(&apu_stats, 0, sizeof(apu_stats));
+    apu_stats.window_start_us = end_us;
+}
+
 static void se_frame(MCPXAPUState *d)
 {
     mcpx_apu_update_dsp_preference(d);
@@ -249,7 +318,9 @@ static void se_frame(MCPXAPUState *d)
     mcpx_apu_monitor_frame(d);
 
     d->ep_frame_div++;
-    d->frame_work_acc_us += qemu_clock_get_us(QEMU_CLOCK_REALTIME) - start_us;
+    int64_t end_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    d->frame_work_acc_us += end_us - start_us;
+    apu_stats_frame(start_us, end_us);
 
     mcpx_debug_end_frame();
 }

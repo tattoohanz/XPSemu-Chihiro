@@ -306,7 +306,7 @@ static void gp_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
 {
     MCPXAPUState *d = opaque;
 
-    qemu_mutex_lock(&d->lock);
+    mcpx_apu_mmio_lock(d);
 
     assert(size == 4);
     assert(addr % 4 == 0);
@@ -396,7 +396,7 @@ static void ep_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
 {
     MCPXAPUState *d = opaque;
 
-    qemu_mutex_lock(&d->lock);
+    mcpx_apu_mmio_lock(d);
 
     assert(size == 4);
     assert(addr % 4 == 0);
@@ -460,10 +460,21 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
         dsp_start_frame(d->gp.dsp);
         dsp_set_halt_requested(d->gp.dsp, false);
         dsp_set_cycle_count(d->gp.dsp, 0);
+        int64_t gp_t0 = get_clock();
+        bool gp_told = false;
         do {
             dsp_run(d->gp.dsp, 1000);
+            /* XPSemu Chihiro diagnostic: a frame that never halts. */
+            if (!gp_told && get_clock() - gp_t0 > 2000000000LL) {
+                gp_told = true;
+                fprintf(stderr, "APU: GP DSP still running after 2 s in one "
+                        "frame (%u cycles)\n",
+                        dsp_get_cycle_count(d->gp.dsp));
+            }
         } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime);
         g_dbg.gp.cycles = dsp_get_cycle_count(d->gp.dsp);
+        mcpx_apu_stats_dsp(false, g_dbg.gp.cycles,
+                           (get_clock() - gp_t0) / 1000);
 
         if ((d->monitor.point == MCPX_APU_DEBUG_MON_GP) ||
             (d->monitor.point == MCPX_APU_DEBUG_MON_GP_OR_EP && !ep_enabled)) {
@@ -485,10 +496,20 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
             dsp_start_frame(d->ep.dsp);
             dsp_set_halt_requested(d->ep.dsp, false);
             dsp_set_cycle_count(d->ep.dsp, 0);
+            int64_t ep_t0 = get_clock();
+            bool ep_told = false;
             do {
                 dsp_run(d->ep.dsp, 1000);
+                if (!ep_told && get_clock() - ep_t0 > 2000000000LL) {
+                    ep_told = true;
+                    fprintf(stderr, "APU: EP DSP still running after 2 s in "
+                            "one frame (%u cycles)\n",
+                            dsp_get_cycle_count(d->ep.dsp));
+                }
             } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime);
             g_dbg.ep.cycles = dsp_get_cycle_count(d->ep.dsp);
+            mcpx_apu_stats_dsp(true, g_dbg.ep.cycles,
+                               (get_clock() - ep_t0) / 1000);
         }
     }
 }
