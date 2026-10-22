@@ -138,6 +138,9 @@ typedef struct SurfaceBinding {
     bool draw_dirty;
     bool download_pending;
     bool upload_pending;
+    /* XPSemu Chihiro: the pending download is for an Xbox CPU read of a
+     * depth surface that did not wait for it (XEMU_DEPTH_READ_LAG) */
+    bool download_nowait;
 
     BasicSurfaceFormatInfo fmt;
     SurfaceFormatInfo host_fmt;
@@ -535,6 +538,7 @@ void pgraph_vk_surface_flush(NV2AState *d);
 enum {
     PGRAPH_VK_DL_OTHER,
     PGRAPH_VK_DL_CPU,       /* the Xbox CPU touched a rendered surface */
+    PGRAPH_VK_DL_CPU_NOWAIT, /* ... read a depth surface, not waited for */
     PGRAPH_VK_DL_SYNC,      /* all dirty surfaces (sync, save) */
     PGRAPH_VK_DL_BLIT_SRC,  /* image blit reads a rendered surface */
     PGRAPH_VK_DL_BLIT_DST,  /* image blit writes part of one */

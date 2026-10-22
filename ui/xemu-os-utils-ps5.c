@@ -844,6 +844,11 @@ static const char kEnvTemplate[] =
     "XEMU_WS_MENU43=1\n"
     "XEMU_WS_MENUBG=0\n"
     "#\n"
+    "# Xbox CPU reads of a depth buffer take the last readback (about a frame\n"
+    "# old) instead of waiting for the PS5 GPU (Maximum Tune 2's light checks;\n"
+    "# 0 = wait as before)\n"
+    "XEMU_DEPTH_READ_LAG=1\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 
