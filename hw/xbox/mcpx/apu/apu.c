@@ -220,28 +220,99 @@ static void throttle(MCPXAPUState *d)
  * XPSemu Chihiro: APU timing diagnostic. Every 5 s one line: audio frames
  * made per second (1500 is real time: 32 samples at 48 kHz), how busy the
  * APU thread was, the slowest frame, the most GP/EP DSP cycles and time in
- * one frame, and how often and how long the Xbox CPU waited for the APU
- * lock (MMIO). All under d->lock.
+ * one frame, how often the Xbox CPU took the APU lock (MMIO), how often and
+ * how long it had to wait, and how often the APU thread handed it over.
+ * All under d->lock.
  */
 static struct {
     int64_t window_start_us;
-    uint64_t frames, waits;
+    uint64_t frames, locks, waits, yields;
     int64_t wait_ns, wait_max_ns, frame_max_us, work_us;
     uint32_t gp_max_cycles, ep_max_cycles;
     int64_t gp_max_us, ep_max_us;
 } apu_stats;
 
+/* ------------------------------------------------------------------------ */
+/* Log lines from a thread of their own                                     */
+
+static QemuThread apu_log_thread;
+static QemuSemaphore apu_log_sem;
+static char apu_log_buf[512];
+static int apu_log_state; /* 0 free, 1 being filled, 2 waiting to be written */
+
+static void *apu_log_fn(void *opaque)
+{
+    for (;;) {
+        qemu_sem_wait(&apu_log_sem);
+        fputs(apu_log_buf, stderr);
+        qatomic_store_release(&apu_log_state, 0);
+    }
+    return NULL;
+}
+
+void mcpx_apu_log(const char *fmt, ...)
+{
+    if (qatomic_cmpxchg(&apu_log_state, 0, 1) != 0) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(apu_log_buf, sizeof(apu_log_buf), fmt, ap);
+    va_end(ap);
+    qatomic_store_release(&apu_log_state, 2);
+    qemu_sem_post(&apu_log_sem);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Lock handoff                                                             */
+
+void mcpx_apu_lock_waiting(MCPXAPUState *d)
+{
+    if (qemu_mutex_trylock(&d->lock) == 0) {
+        return;
+    }
+    qatomic_inc(&d->lock_waiters);
+    qemu_mutex_lock(&d->lock);
+    qatomic_dec(&d->lock_waiters);
+}
+
 void mcpx_apu_mmio_lock(MCPXAPUState *d)
 {
+    if (qemu_mutex_trylock(&d->lock) == 0) {
+        apu_stats.locks++;
+        return;
+    }
     int64_t t0 = get_clock();
+    qatomic_inc(&d->lock_waiters);
     qemu_mutex_lock(&d->lock);
+    qatomic_dec(&d->lock_waiters);
     int64_t waited = get_clock() - t0;
+    apu_stats.locks++;
     apu_stats.waits++;
     apu_stats.wait_ns += waited;
     if (waited > apu_stats.wait_max_ns) {
         apu_stats.wait_max_ns = waited;
     }
 }
+
+void mcpx_apu_yield_lock(MCPXAPUState *d)
+{
+    if (likely(!qatomic_read(&d->lock_waiters))) {
+        return;
+    }
+    apu_stats.yields++;
+    qemu_mutex_unlock(&d->lock);
+    /* A waiter drops the count once it holds the lock. It runs on a core of
+     * its own (the Xbox CPU on CPU 10), so this is short; 1 ms at most. */
+    int64_t until = get_clock() + 1000000;
+    while (qatomic_read(&d->lock_waiters) && get_clock() < until) {
+        cpu_relax();
+    }
+    qemu_mutex_lock(&d->lock);
+}
+
+/* Tenths of a millisecond as "12.3" without floating point. */
+#define APU_MS10(ns) (int)((ns) / 1000000), (int)((ns) / 100000 % 10)
 
 void mcpx_apu_stats_dsp(bool ep, uint32_t cycles, int64_t us)
 {
@@ -270,17 +341,20 @@ static void apu_stats_frame(int64_t start_us, int64_t end_us)
     if (window_us < 5000000) {
         return;
     }
-    fprintf(stderr,
-            "APU: %.0f frames/s (1500 = real time), busy %.0f%%, slowest frame "
-            "%.1f ms, GP max %u cycles %.1f ms, EP max %u cycles %.1f ms, "
-            "CPU waited %lu times %.0f ms (longest %.1f ms), DSP %s\n",
-            apu_stats.frames * 1e6 / window_us,
-            apu_stats.work_us * 100.0 / window_us,
-            apu_stats.frame_max_us / 1000.0, apu_stats.gp_max_cycles,
-            apu_stats.gp_max_us / 1000.0, apu_stats.ep_max_cycles,
-            apu_stats.ep_max_us / 1000.0, (unsigned long)apu_stats.waits,
-            apu_stats.wait_ns / 1e6, apu_stats.wait_max_ns / 1e6,
-            g_config.audio.use_dsp ? "on" : "off");
+    /* Integers only, and written by the log thread (see mcpx_apu_log). */
+    mcpx_apu_log(
+        "APU: %d frames/s (1500 = real time), busy %d%%, slowest frame "
+        "%d.%d ms, GP max %u cycles %d.%d ms, EP max %u cycles %d.%d ms, "
+        "CPU took the lock %lu times, waited %lu times %d ms (longest "
+        "%d.%d ms), APU let it in %lu times, DSP %s\n",
+        (int)(apu_stats.frames * 1000000 / window_us),
+        (int)(apu_stats.work_us * 100 / window_us),
+        APU_MS10(apu_stats.frame_max_us * 1000), apu_stats.gp_max_cycles,
+        APU_MS10(apu_stats.gp_max_us * 1000), apu_stats.ep_max_cycles,
+        APU_MS10(apu_stats.ep_max_us * 1000), (unsigned long)apu_stats.locks,
+        (unsigned long)apu_stats.waits, (int)(apu_stats.wait_ns / 1000000),
+        APU_MS10(apu_stats.wait_max_ns), (unsigned long)apu_stats.yields,
+        g_config.audio.use_dsp ? "on" : "off");
     memset(&apu_stats, 0, sizeof(apu_stats));
     apu_stats.window_start_us = end_us;
 }
@@ -368,6 +442,9 @@ static void *mcpx_apu_frame_thread(void *arg)
 
         throttle(d);
         se_frame(d);
+        /* Behind real time throttle() never waits: let a waiting Xbox CPU
+         * (or a pause) in here, between frames, too. */
+        mcpx_apu_yield_lock(d);
     }
     qemu_mutex_unlock(&d->lock);
     return NULL;
@@ -405,7 +482,7 @@ static void mcpx_apu_reset_hold(Object *obj, ResetType type)
     MCPXAPUState *d = MCPX_APU_DEVICE(obj);
 
     bql_unlock();
-    qemu_mutex_lock(&d->lock);
+    mcpx_apu_lock_waiting(d);
     mcpx_apu_wait_for_idle(d);
     mcpx_apu_reset_locked(d);
     mcpx_apu_resume(d);
@@ -422,7 +499,7 @@ static void mcpx_apu_vm_state_change(void *opaque, bool running, RunState state)
 
     if (!running) {
         bql_unlock();
-        qemu_mutex_lock(&d->lock);
+        mcpx_apu_lock_waiting(d);
         mcpx_apu_wait_for_idle(d);
         if (d->gp.dsp) {
             dsp_sync_to_vm(d->gp.dsp);
@@ -433,7 +510,7 @@ static void mcpx_apu_vm_state_change(void *opaque, bool running, RunState state)
         qemu_mutex_unlock(&d->lock);
         bql_lock();
     } else {
-        qemu_mutex_lock(&d->lock);
+        mcpx_apu_lock_waiting(d);
         if (d->gp.dsp) {
             dsp_sync_from_vm(d->gp.dsp);
         }
@@ -448,7 +525,7 @@ static void mcpx_apu_vm_state_change(void *opaque, bool running, RunState state)
 static int mcpx_apu_pre_load(void *opaque)
 {
     MCPXAPUState *d = opaque;
-    qemu_mutex_lock(&d->lock);
+    mcpx_apu_lock_waiting(d);
     mcpx_apu_reset_locked(d);
     qemu_mutex_unlock(&d->lock);
     return 0;
@@ -481,6 +558,7 @@ static void mcpx_apu_realize(PCIDevice *dev, Error **errp)
     d->exiting = false;
     d->is_idle = false;
     d->pause_requested = true;
+    d->lock_waiters = 0;
     qemu_mutex_init(&d->lock);
     qemu_mutex_lock(&d->lock);
     qemu_cond_init(&d->cond);
@@ -496,6 +574,9 @@ static void mcpx_apu_realize(PCIDevice *dev, Error **errp)
     }
 
     qemu_add_vm_change_state_handler(mcpx_apu_vm_state_change, d);
+    qemu_sem_init(&apu_log_sem, 0);
+    qemu_thread_create(&apu_log_thread, "mcpx.apu_log", apu_log_fn, NULL,
+                       QEMU_THREAD_DETACHED);
     qemu_thread_create(&d->apu_thread, "mcpx.apu_thread", mcpx_apu_frame_thread,
                        d, QEMU_THREAD_JOINABLE);
     mcpx_apu_wait_for_idle(d);
@@ -507,7 +588,7 @@ static void mcpx_apu_exitfn(PCIDevice *dev)
     MCPXAPUState *d = MCPX_APU_DEVICE(dev);
 
     bql_unlock();
-    qemu_mutex_lock(&d->lock);
+    mcpx_apu_lock_waiting(d);
     mcpx_apu_wait_for_idle(d);
     qatomic_set(&d->exiting, true);
     qemu_cond_signal(&d->cond);

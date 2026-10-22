@@ -81,6 +81,9 @@ typedef struct MCPXAPUState {
 
     QemuThread apu_thread;
     QemuMutex lock;
+    /* XPSemu Chihiro: other threads waiting for `lock` (the Xbox CPU's MMIO,
+     * pause, reset). The APU thread hands it over between DSP chunks. */
+    int lock_waiters;
     QemuCond cond;
     QemuCond idle_cond;
     bool pause_requested;
@@ -142,5 +145,20 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d);
 void mcpx_apu_mmio_lock(MCPXAPUState *d);
 /* The GP/EP DSP of this frame ran this many cycles before halting. */
 void mcpx_apu_stats_dsp(bool ep, uint32_t cycles, int64_t us);
+
+/*
+ * XPSemu Chihiro: lock handoff. On the PS5 the C DSP interpreter can take a
+ * whole frame and more, and the APU thread then never waits (it is behind),
+ * so it never let go of `lock`: the Xbox CPU, which waits for it holding the
+ * big QEMU lock, stopped everything. Other threads take `lock` through
+ * mcpx_apu_lock_waiting(); the APU thread calls mcpx_apu_yield_lock() between
+ * DSP chunks and frames, which lets anyone waiting in first.
+ */
+void mcpx_apu_lock_waiting(MCPXAPUState *d);
+void mcpx_apu_yield_lock(MCPXAPUState *d);
+/* A line for xemu.log written by a thread of its own: writing to the log on
+ * the PS5 can take 100 ms and more, too long for the APU thread. A line sent
+ * while the previous one is still being written is dropped. */
+void mcpx_apu_log(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
 
 #endif
