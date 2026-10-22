@@ -120,6 +120,22 @@ void pgraph_vk_image_blit(NV2AState *d)
     hwaddr dest_addr = dest - d->vram_ptr;
 
     SurfaceBinding *surf_src = pgraph_vk_surface_get(d, source_addr);
+    /* XPSemu Chihiro: what the blit copies (log only, game log "blits") */
+    {
+        char s_desc[96], d_desc[96];
+        pgraph_vk_diag_surface(s_desc, sizeof(s_desc), surf_src);
+        pgraph_vk_diag_surface(d_desc, sizeof(d_desc),
+                               pgraph_vk_surface_get(d, dest_addr));
+        pgraph_vk_diag_note(
+            &pgraph_vk_diag_blit,
+            "%08" PRIx64 " (%s) -> %08" PRIx64 " (%s), %ux%u from %u,%u to "
+            "%u,%u, fmt %u, pitch %u -> %u, op %u",
+            (uint64_t)source_addr, s_desc, (uint64_t)dest_addr, d_desc,
+            image_blit->width, image_blit->height, image_blit->in_x,
+            image_blit->in_y, image_blit->out_x, image_blit->out_y,
+            context_surfaces->color_format, context_surfaces->source_pitch,
+            context_surfaces->dest_pitch, image_blit->operation);
+    }
     if (surf_src) {
         PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_BLIT_SRC,
                            pgraph_vk_surface_download_if_dirty(d, surf_src));

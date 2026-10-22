@@ -556,6 +556,29 @@ extern int pgraph_vk_dl_cause;
 void pgraph_vk_dl_causes_format(char *buf, size_t size);
 void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 void pgraph_vk_reshape_format(char *buf, size_t size);
+
+/* XPSemu Chihiro: per-window counts of described events for the game log
+ * (log only): image blits and textures read from rendered memory. */
+#define PGRAPH_VK_DIAG_SLOTS 12
+typedef struct PGRAPHVkDiag {
+    QemuMutex lock;
+    int init;
+    struct {
+        char key[240];
+        uint32_t n;
+    } e[PGRAPH_VK_DIAG_SLOTS];
+} PGRAPHVkDiag;
+extern PGRAPHVkDiag pgraph_vk_diag_blit, pgraph_vk_diag_tex;
+void pgraph_vk_diag_note(PGRAPHVkDiag *t, const char *fmt, ...)
+    G_GNUC_PRINTF(2, 3);
+void pgraph_vk_diag_format(PGRAPHVkDiag *t, char *buf, size_t size);
+void pgraph_vk_diag_blit_format(char *buf, size_t size);
+void pgraph_vk_diag_tex_format(char *buf, size_t size);
+/* "color 640x480 pitch 2560 fmt 8 rendered" or "no surface" */
+void pgraph_vk_diag_surface(char *buf, size_t size, const SurfaceBinding *s);
+/* the first rendered (dirty) surface overlapping the range, or NULL */
+SurfaceBinding *pgraph_vk_dirty_surface_in_range(PGRAPHState *pg, hwaddr start,
+                                                 hwaddr size);
 #define PGRAPH_VK_DL_CAUSE(c, stmt)              \
     do {                                         \
         int dl_saved_ = pgraph_vk_dl_cause;      \

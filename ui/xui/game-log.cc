@@ -43,6 +43,8 @@ extern "C" int xemu_ps5_threads_made;
 extern "C" void pgraph_vk_dl_causes_format(char *buf, size_t size);
 extern "C" void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 extern "C" void pgraph_vk_reshape_format(char *buf, size_t size);
+extern "C" void pgraph_vk_diag_blit_format(char *buf, size_t size);
+extern "C" void pgraph_vk_diag_tex_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -249,7 +251,9 @@ void GameLogStart(const GameLogInfo &info)
          "Xbox CPU touched (address, size, format, downloads, accesses, "
          "bytes touched, the guest PC near it); and the surfaces dropped for "
          "another shape at the same address (old -> new, the rule that "
-         "refused the old one)\n"
+         "refused the old one); the image blits (source -> destination, size, "
+         "position, format, pitch) and the textures read from rendered "
+         "memory (why the surface there could not serve)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -472,6 +476,16 @@ void GameLogTick()
     pgraph_vk_reshape_format(reshaped, sizeof(reshaped));
     if (reshaped[0]) {
         Write(std::string("           other shape: ") + reshaped + "\n");
+    }
+    char diag[1024];
+    pgraph_vk_diag_blit_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           blits: ") + diag + "\n");
+    }
+    pgraph_vk_diag_tex_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           textures from rendered memory: ") +
+              diag + "\n");
     }
 
     // The stopwatches (hw/xbox/xemu-timing.h): ms per second, and times.
