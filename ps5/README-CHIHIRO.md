@@ -43,7 +43,7 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
 | Square | Second wheel button (Maximum Tune) |
 | Circle | Card in (Maximum Tune) |
 | Options or Cross | Start |
-| Create | Coin |
+| D-pad up | Coin (Create too, but it opens the PS5 capture menu) |
 | D-pad right / left | Test / Service |
 | Touchpad | XPSemu's menu |
 
