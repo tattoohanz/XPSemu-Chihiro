@@ -297,8 +297,8 @@ int xemu_repair_saves(uint32_t title_id)
         return 0;
     }
     XsrDisk disk = { blk, hdd_read, hdd_write };
-    g_mkdir_with_parents("/data/xemu/save-repair", 0777);
-    char *path = g_strdup_printf("/data/xemu/save-repair/%08x-%" PRId64 ".undo",
+    g_mkdir_with_parents("/data/xemu-chihiro/save-repair", 0777);
+    char *path = g_strdup_printf("/data/xemu-chihiro/save-repair/%08x-%" PRId64 ".undo",
                                  title_id, g_get_real_time() / G_USEC_PER_SEC);
     FILE *undo = fopen(path, "wb");
     char names[256];

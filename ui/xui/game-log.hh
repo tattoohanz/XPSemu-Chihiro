@@ -27,7 +27,7 @@ struct GameLogInfo {
     std::string patches;   // Patches applied (game-patches.cc), or ""
 };
 
-// A game starts: /data/xemu/xemu-game.log begins again (the last one is
+// A game starts: /data/xemu-chihiro/xemu-game.log begins again (the last one is
 // kept as xemu-game.log.old) with a header, then follows the game: a stats
 // line every few seconds and everything the emulator prints (from
 // xemu.log) until it stops.

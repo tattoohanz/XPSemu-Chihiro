@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define XEMU_DEV_DIR "/data/xemu/dev"
+#define XEMU_DEV_DIR "/data/xemu-chihiro/dev"
 #define XEMU_DEV_JOURNAL XEMU_DEV_DIR "/journal.txt"
 
 /*

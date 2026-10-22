@@ -1,7 +1,7 @@
 #!/bin/bash
 # XPSemu dev build: ui/xpsemu-dev.h's XPSEMU_DEV set to 1 while it builds
 # (the crash journal, the stress test, the stability report), then back to 0.
-# The title goes to dist-dev/PPSA97358 with:
+# The title goes to dist-dev/PPSA97372 with:
 #   dev-build.txt    the eboot's id (first 12 hex of its sha256), for the journal
 #   dev-symbols.txt  "offset name" of every function, so the dashboard can name
 #                    where a crash happened
@@ -17,7 +17,7 @@ grep -q '^#define XPSEMU_DEV 1$' "$header"
 
 bash ps5/build-title.sh
 
-app=dist/PPSA97358
+app=dist/PPSA97372
 sha=$(sha256sum "$app/eboot.bin" | cut -c1-12)
 echo "$sha" > "$app/dev-build.txt"
 llvm-nm-18 -n -C --defined-only build-ps5/title/llvm-pie.elf |
@@ -30,4 +30,4 @@ cp build-ps5/title/llvm-pie.elf "ps5/builds/llvm-pie-$sha.elf"
 
 rm -rf dist-dev; mkdir -p dist-dev
 mv "$app" dist-dev/
-echo "dev build $sha: $src/dist-dev/PPSA97358 ($(wc -l < dist-dev/PPSA97358/dev-symbols.txt) symbols)"
+echo "dev build $sha: $src/dist-dev/PPSA97372 ($(wc -l < dist-dev/PPSA97372/dev-symbols.txt) symbols)"

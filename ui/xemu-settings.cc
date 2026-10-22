@@ -30,6 +30,7 @@
 #include <sstream>
 #include <iostream>
 #include <locale.h>
+#include "ui/xemu-ps5-app.h"
 
 #include "xemu-controllers.h"
 #include "xemu-settings.h"
@@ -87,8 +88,8 @@ const char *xemu_settings_get_base_path(void)
      * folder is read-only: keep everything under /data (as PS5SX2 does with
      * /data/PCSX2).
      */
-    g_mkdir_with_parents("/data/xemu", 0777);
-    base_path = "/data/xemu/";
+    g_mkdir_with_parents("/data/xemu-chihiro", 0777);
+    base_path = "/data/xemu-chihiro/";
     fprintf(stderr, "%s: base path: %s\n", __func__, base_path);
     return base_path;
 #endif
@@ -217,7 +218,7 @@ bool xemu_settings_load(void)
 #ifdef __PROSPERO__
     if (qemu_access(settings_path, F_OK) == -1 &&
         !xemu_ps5_create_default_config(settings_path)) {
-        error_msg = "Failed to create the default PS5 config. Check /data/xemu permissions.\n";
+        error_msg = "Failed to create the default PS5 config. Check /data/xemu-chihiro permissions.\n";
     }
 #endif
     if (qemu_access(settings_path, F_OK) == -1) {
@@ -412,4 +413,89 @@ void xemu_settings_reset_keyboard_mapping(void)
   cnode->update_from_struct(&g_config);
   cnode->reset_to_defaults();
   cnode->store_to_struct(&g_config);
+}
+
+/* CHIHIRO (not upstream) */
+bool xemu_media_is_xbox_disc(const char *path)
+{
+    /* The XISO volume descriptor sits in sector 32, at the start of the
+     * game partition: offset 0 of an XISO, after the video partition of a
+     * redump image. */
+    static const char magic[] = "MICROSOFT*XBOX*MEDIA";
+    static const long partitions[] = { 0, 0x18300000 };
+    if (!path || !path[0] || g_file_test(path, G_FILE_TEST_IS_DIR)) {
+        return false;
+    }
+    FILE *f = qemu_fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    bool disc = false;
+    for (int i = 0; i < 2 && !disc; i++) {
+        char buf[sizeof(magic) - 1];
+        disc = fseek(f, partitions[i] + 0x10000, SEEK_SET) == 0 &&
+               fread(buf, 1, sizeof(buf), f) == sizeof(buf) &&
+               memcmp(buf, magic, sizeof(buf)) == 0;
+    }
+    fclose(f);
+    return disc;
+}
+
+/* CHIHIRO (not upstream): -1 when nothing asks. */
+static int chihiro_mode_asked = -1;
+
+void xemu_chihiro_mode_ask(bool chihiro)
+{
+    chihiro_mode_asked = chihiro;
+}
+
+const char *xemu_chihiro_image(void)
+{
+    static char *image;
+    if (!image) {
+        const char *path = g_config.sys.files.dvd_path;
+        image = g_strdup(path ? path : "");
+    }
+    return image;
+}
+
+bool xemu_chihiro_mode(void)
+{
+    static int mode = -1;
+    if (mode < 0) {
+        const char *image = xemu_chihiro_image();
+        if (chihiro_mode_asked >= 0) {
+            mode = chihiro_mode_asked;
+        } else if (image && image[0]) {
+            mode = !xemu_media_is_xbox_disc(image);
+        } else {
+#ifdef __PROSPERO__
+            mode = 0; /* The Xbox, under XPSemu's dashboard */
+#else
+            switch (g_config.sys.default_machine) {
+            case CONFIG_SYS_DEFAULT_MACHINE_XBOX:
+                mode = 0;
+                break;
+            case CONFIG_SYS_DEFAULT_MACHINE_CHIHIRO:
+                mode = 1;
+                break;
+            default:
+                mode = g_config.sys.last_machine ==
+                       CONFIG_SYS_LAST_MACHINE_CHIHIRO;
+                break;
+            }
+#endif
+        }
+    }
+    return mode;
+}
+
+bool xemu_debug_mode(void)
+{
+    static int mode = -1;
+    if (mode < 0) {
+        const char *e = getenv("XEMU_DEBUG_MODE");
+        mode = e && e[0] && e[0] != '0';
+    }
+    return mode;
 }

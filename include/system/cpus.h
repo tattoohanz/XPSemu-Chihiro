@@ -22,6 +22,13 @@ void cpu_thread_signal_created(CPUState *cpu);
 void cpu_thread_signal_destroyed(CPUState *cpu);
 void cpu_handle_guest_debug(CPUState *cpu);
 
+/* XPSemu Chihiro: the desktop fork's XEMU_TBRATE debug probe is not part of
+ * this build; the Chihiro code asks for it and gets "off". */
+static inline bool xemu_tbrate_enabled(void)
+{
+    return false;
+}
+
 /* end interface for cpus accelerator threads */
 
 bool qemu_in_vcpu_thread(void);

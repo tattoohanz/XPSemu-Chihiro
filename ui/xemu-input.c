@@ -559,6 +559,8 @@ void xemu_input_update_controllers(void)
     QTAILQ_FOREACH(iter, &available_controllers, entry) {
         xemu_input_update_rumble(iter);
     }
+    /* CHIHIRO: player 1's controller drives the cabinet's JVS inputs. */
+    xemu_input_update_chihiro_jvs();
 }
 
 void xemu_input_update_sdl_kbd_controller_state(ControllerState *state)
@@ -718,7 +720,9 @@ void xemu_input_bind(int index, ControllerState *state, int save)
 
     // Unbind existing controller
     if (bound_controllers[index]) {
-        assert(bound_controllers[index]->device != NULL);
+        /* A Chihiro's controllers have no USB device (below). */
+        assert(bound_controllers[index]->device != NULL ||
+               xemu_chihiro_mode());
         Error *err = NULL;
 
         // Unbind any XMUs
@@ -736,8 +740,10 @@ void xemu_input_bind(int index, ControllerState *state, int save)
             }
         }
 
-        qdev_unplug((DeviceState *)bound_controllers[index]->device, &err);
-        assert(err == NULL);
+        if (bound_controllers[index]->device) {
+            qdev_unplug((DeviceState *)bound_controllers[index]->device, &err);
+            assert(err == NULL);
+        }
 
         bound_controllers[index]->bound = -1;
         bound_controllers[index]->device = NULL;
@@ -768,6 +774,13 @@ void xemu_input_bind(int index, ControllerState *state, int save)
 
         bound_controllers[index] = state;
         bound_controllers[index]->bound = index;
+
+        /* CHIHIRO: the USB ports are the baseboard's AN2131 devices: no
+         * gamepad hub or controller, input goes through JVS
+         * (xemu-input-chihiro.c). */
+        if (xemu_chihiro_mode()) {
+            return;
+        }
 
         char *tmp;
 
@@ -819,6 +832,11 @@ bool xemu_input_bind_xmu(int player_index, int expansion_slot_index,
 {
     assert(player_index >= 0 && player_index < 4);
     assert(expansion_slot_index >= 0 && expansion_slot_index < 2);
+
+    /* A Chihiro's pads have no hub to plug a memory unit into. */
+    if (xemu_chihiro_mode()) {
+        return false;
+    }
 
     ControllerState *player = bound_controllers[player_index];
     enum peripheral_type peripheral_type =
@@ -942,6 +960,10 @@ void xemu_input_unbind_xmu(int player_index, int expansion_slot_index)
 
 void xemu_input_rebind_xmu(int port)
 {
+    /* A Chihiro's pads have no hub (xemu_input_bind). */
+    if (xemu_chihiro_mode()) {
+        return;
+    }
     // Try to bind peripherals back to controller
     for (int i = 0; i < 2; i++) {
         enum peripheral_type peripheral_type =

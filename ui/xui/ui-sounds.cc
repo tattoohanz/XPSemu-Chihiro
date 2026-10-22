@@ -4,7 +4,7 @@
 // XPSemu's own sounds: recordings embedded in the app (ps5/sounds, made
 // into ui-sounds-data.h by ps5/sounds/embed-sounds.py), and the rest
 // synthesized here (glassy ticks and chimes, airy whooshes). A WAV in
-// /data/xemu/sounds replaces either. They're mixed into the console audio
+// /data/xemu-chihiro/sounds replaces either. They're mixed into the console audio
 // output by the audio thread (hw/xbox/mcpx/apu/monitor.c), which keeps
 // running, playing silence, while the emulated Xbox is paused behind the
 // dashboard.

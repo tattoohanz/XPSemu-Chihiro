@@ -10,6 +10,7 @@
 #include "qemu/osdep.h"
 #include "xemu-input.h"
 #include "xemu-dev-ps5.h"
+#include "ui/xemu-ps5-app.h"
 
 volatile int xemu_dev_stress_on;
 volatile int xemu_dev_bot_on;
@@ -64,7 +65,7 @@ void xemu_dev_start(void)
     /* ps5/build-dev.sh puts the eboot's id next to it */
     static const char *const paths[] = {
         "/app0/dev-build.txt",
-        "/data/homebrew/PPSA97358/dev-build.txt",
+        "/data/homebrew/" XEMU_PS5_TITLE_ID "/dev-build.txt",
     };
     for (size_t i = 0; !g_build[0] && i < ARRAY_SIZE(paths); i++) {
         FILE *f = fopen(paths[i], "r");

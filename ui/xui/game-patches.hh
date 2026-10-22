@@ -56,7 +56,7 @@ struct PatchFile {
 
 bool PatchFileParse(const std::string &path, PatchFile *out);
 
-// The patch files in /data/xemu/patches (and folders in it), read again
+// The patch files in /data/xemu-chihiro/patches (and folders in it), read again
 // by PatchesRescan (when the dashboard opens).
 void PatchesRescan();
 std::vector<const PatchFile *> PatchesFor(uint32_t title_id);

@@ -48,6 +48,7 @@
 #include "xemu-snapshots.h"
 #include "xemu-version.h"
 #include "xemu-os-utils.h"
+#include "ui/xemu-ps5-app.h"
 
 #include "data/xemu_64x64.png.h"
 
@@ -1424,7 +1425,7 @@ char **gArgv;
 
 #ifdef __PROSPERO__
 /* Exists while a start in 128 MB mode isn't known to work (see main). */
-#define XEMU_PS5_MEM128_MARKER "/data/xemu/.mem128-starting"
+#define XEMU_PS5_MEM128_MARKER "/data/xemu-chihiro/.mem128-starting"
 
 /* Startup milestones in the log: the PS5 can kill a title without a signal. */
 #define PS5_STEP(step) fprintf(stderr, "xemu PS5: %s\n", step)
@@ -1581,18 +1582,30 @@ int main(int argc, char **argv)
     atexit(xemu_settings_save);
 
 #ifdef __PROSPERO__
-    /* Games in /data/xemu/games show in the quick menu's Games list: there's
+    /* Games in /data/xemu-chihiro/games show in the quick menu's Games list: there's
      * no file dialog on the PS5 to pick one elsewhere. */
     if (!g_config.general.games_dir || !g_config.general.games_dir[0]) {
-        g_mkdir_with_parents("/data/xemu/games", 0777);
+        g_mkdir_with_parents("/data/xemu-chihiro/games", 0777);
         xemu_settings_set_string(&g_config.general.games_dir,
-                                 "/data/xemu/games");
+                                 "/data/xemu-chihiro/games");
     }
     /* The dashboard is the front end: no desktop menu bar over the games. */
     g_config.display.ui.show_menubar = false;
+    /* XPSemu Chihiro: the app's folders, and env.txt's switches (the
+     * XEMU_WM*_ and XEMU_WS_HACK of the desktop build) in the environment
+     * before anything reads them. */
+    xemu_ps5_chihiro_prepare();
     /* Always start at the Xbox dashboard: the disc of the last session is
-     * saved in the config, don't boot it again. */
-    xemu_settings_set_string(&g_config.sys.files.dvd_path, "");
+     * saved in the config, don't boot it again. A Chihiro game is the
+     * exception: its image is mapped into the media board when the machine
+     * is made, so a home-screen shortcut to it, or the dashboard asking for
+     * it (then restarting the app), boots the Chihiro with it. */
+    {
+        char *chihiro = xemu_ps5_chihiro_boot_image();
+        xemu_settings_set_string(&g_config.sys.files.dvd_path,
+                                 chihiro ? chihiro : "");
+        free(chihiro);
+    }
     /* The Xbox has 64 MB, like a retail one: every game is made for it.
      * (128 MB mode was unreliable here and is off.) */
     if (g_config.sys.mem_limit != CONFIG_SYS_MEM_LIMIT_64) {

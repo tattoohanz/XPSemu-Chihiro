@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # XPSemu: the blank Xbox hard disk XPSemu makes when there's none
-# (/data/xemu/xbox_hdd.qcow2): xemu-dashboard's image (MIT, Ryzee119 and
+# (/data/xemu-chihiro/xbox_hdd.qcow2): xemu-dashboard's image (MIT, Ryzee119 and
 # contributors: github.com/xemu-project/xemu-dashboard; licence in
 # ps5/blank-hdd/LICENSE), an 8 GB disk formatted as an Xbox's (C, E and the
 # X/Y/Z caches) with a small free dashboard, no Microsoft files. Embedded

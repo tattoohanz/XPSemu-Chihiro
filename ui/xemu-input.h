@@ -128,6 +128,9 @@ extern int *g_keyboard_scancode_map[25];
 void xemu_input_init(void);
 void xemu_input_process_sdl_events(const SDL_Event *event);
 void xemu_input_update_controllers(void);
+/* CHIHIRO (xemu-input-chihiro.c): the bound controllers onto the cabinet's
+ * JVS switches and analog channels, once per UI frame. No-op on an Xbox. */
+void xemu_input_update_chihiro_jvs(void);
 void xemu_input_update_controller(ControllerState *state);
 void xemu_input_update_sdl_kbd_controller_state(ControllerState *state);
 void xemu_input_update_sdl_controller_state(ControllerState *state);

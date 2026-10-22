@@ -7,6 +7,7 @@
 // (at your option) any later version.
 //
 #include "dev-report.hh"
+#include "ui/xemu-ps5-app.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -16,11 +17,11 @@
 #include <sstream>
 
 #ifndef DEV_REPORT_DIR // A PC test sets its own
-#define DEV_REPORT_DIR "/data/xemu/dev"
+#define DEV_REPORT_DIR "/data/xemu-chihiro/dev"
 #endif
 #ifndef DEV_REPORT_SYMBOLS
 #define DEV_REPORT_SYMBOLS { "/app0/dev-symbols.txt", \
-                             "/data/homebrew/PPSA97358/dev-symbols.txt" }
+                             "/data/homebrew/" XEMU_PS5_TITLE_ID "/dev-symbols.txt" }
 #endif
 #ifndef DEV_REPORT_BUILD
 extern "C" const char *xemu_dev_build(void);

@@ -262,6 +262,13 @@ void xemu_queue_notification(const char *msg)
     notification_manager.QueueNotification(msg);
 }
 
+/* XPSemu Chihiro: the Chihiro code's warnings, shown like any notification
+ * (XPSemu's notifications have no warning colour). */
+void xemu_queue_notification_warning(const char *msg)
+{
+    notification_manager.QueueNotification(msg);
+}
+
 void xemu_queue_error_message(const char *msg)
 {
     notification_manager.QueueError(msg);

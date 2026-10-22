@@ -32,12 +32,12 @@ enum UiSound {
 };
 
 // Plays a sound (unless menu sounds are off). Each is made once, the first
-// time: /data/xemu/sounds/<name>.wav if there is one (any WAV SDL reads),
+// time: /data/xemu-chihiro/sounds/<name>.wav if there is one (any WAV SDL reads),
 // else XPSemu's own.
 void UiSoundPlay(UiSound sound);
 
 // The dashboard's music (display.ui.menu_music): one track looping, its
-// end blended into its start. /data/xemu/sounds/music.wav if there is one,
+// end blended into its start. /data/xemu-chihiro/sounds/music.wav if there is one,
 // else XPSemu's own. Prepare loads it (slow the first time: do it while
 // something else stalls anyway); Play fades it in (true) or out (false),
 // carrying on from where it was.

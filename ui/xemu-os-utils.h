@@ -29,7 +29,7 @@ extern "C" {
 const char *xemu_get_os_info(void);
 
 #ifdef __PROSPERO__
-// Logs to /data/xemu/xemu.log and reports crashes there. First thing in main.
+// Logs to /data/xemu-chihiro/xemu.log and reports crashes there. First thing in main.
 void xemu_ps5_early_init(void);
 
 // The busiest threads, each given a core of its own (perf.cpu_pinning):
@@ -57,6 +57,21 @@ bool xemu_ps5_thread_cpu_seconds(int role, double *seconds);
 void xemu_ps5_profile_start(void);
 void xemu_ps5_profile_stop(void);
 char *xemu_ps5_profile_report(void);
+
+// XPSemu Chihiro: the title ID this copy runs as ("" if unknown); the
+// main title, or one of its home-screen shortcuts.
+const char *xemu_ps5_own_title_id(void);
+// Makes the app's folders and its env.txt (a template the first time),
+// and puts env.txt's NAME=VALUE lines in the environment. After the
+// settings are loaded, before anything reads them.
+void xemu_ps5_chihiro_prepare(void);
+// The Chihiro image to boot this time (free it), or NULL for the Xbox:
+// a home-screen shortcut's image, or the one the dashboard asked for
+// before restarting the app (XEMU_PS5_CHIHIRO_BOOT_FILE, taken once).
+char *xemu_ps5_chihiro_boot_image(void);
+// An Xbox game the dashboard asked for before restarting the app (the
+// Xbox boots, the dashboard launches it), else "".
+const char *xemu_ps5_xbox_autolaunch(void);
 #endif
 
 #ifdef CONFIG_CPUID_H

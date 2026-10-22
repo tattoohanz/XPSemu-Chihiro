@@ -19,7 +19,17 @@ enable = false
 mem_limit = '64'
 
 [sys.files]
-bootrom_path = '/data/xemu/mcpx_1.0.bin'
-flashrom_path = '/data/xemu/Complex_4627.bin'
-hdd_path = '/data/xemu/xbox_hdd.qcow2'
-eeprom_path = '/data/xemu/eeprom.bin'
+bootrom_path = '/data/xemu-chihiro/mcpx_1.0.bin'
+flashrom_path = '/data/xemu-chihiro/Complex_4627.bin'
+hdd_path = '/data/xemu-chihiro/xbox_hdd.qcow2'
+eeprom_path = '/data/xemu-chihiro/eeprom.bin'
+
+[chihiro.roms]
+bios_path = '/data/xemu-chihiro/chihiro/chihiro_xbox_bios.bin'
+
+[chihiro.settings]
+region = 'ex'
+
+# The controller layout for a Chihiro game the cabinet table doesn't know.
+[chihiro.jvs]
+profile = 'wmmt2'

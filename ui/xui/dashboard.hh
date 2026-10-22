@@ -31,6 +31,7 @@ public:
         std::string path;
         uint32_t title_id;
         bool full_disc; // A redump image, which needs converting to XISO
+        bool chihiro = false; // A Chihiro netboot image (FATX .bin)
     };
 
     void Show() override;

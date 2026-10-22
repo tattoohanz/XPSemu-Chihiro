@@ -24,6 +24,7 @@
 #include "vsh.h"
 #include "vsh-ff.h"
 #include "vsh-prog.h"
+#include "ui/xemu-widescreen.h"
 
 DEF_UNIFORM_INFO_ARR(VshUniform, VSH_UNIFORM_DECL_X)
 
@@ -397,6 +398,17 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
         // clang-format on
     }
 
+    /* The widescreen hack (XEMU_WS_HACK) narrows clip x at gl_Position
+     * below; the screen-space position the fragment shader rebuilds depth
+     * from (barycentrics against gl_FragCoord) must be narrowed the same
+     * way, or the depth of every fragment off the centre is wrong. */
+    if (xemu_get_ws_scale() != 1.0f) {
+        mstring_append_fmt(body,
+                           "  vtxPos.x = 0.5 * surfaceSize.x + "
+                           "(vtxPos.x - 0.5 * surfaceSize.x) * %.6f;\n",
+                           xemu_get_ws_scale());
+    }
+
     mstring_append(body, "\n"
                    "  vtxD0 = clamp(NaNToOne(oD0), 0.0, 1.0);\n"
                    "  vtxB0 = clamp(NaNToOne(oB0), 0.0, 1.0);\n"
@@ -431,13 +443,18 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
         );
     }
 
+    /* Both the fixed-function path (vsh-ff.c) and the programmable one
+     * (vsh-prog.c) converge on oPos, so this is the single place where the
+     * widescreen hack can narrow clip x for every draw the game makes. */
+    float ws = xemu_get_ws_scale();
+
     if (opts.vulkan) {
-        mstring_append(body,
-                   "  gl_Position = oPos;\n"
+        mstring_append_fmt(body,
+                   "  gl_Position = vec4(oPos.x * %.6f, oPos.yzw);\n", ws
         );
     } else {
-        mstring_append(body,
-                   "  gl_Position = vec4(oPos.x, oPos.y, 2.0*oPos.z - oPos.w, oPos.w);\n"
+        mstring_append_fmt(body,
+                   "  gl_Position = vec4(oPos.x * %.6f, oPos.y, 2.0*oPos.z - oPos.w, oPos.w);\n", ws
         );
     }
 

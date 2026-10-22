@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Link xemu (build-ps5, from ps5/configure-ps5.sh) as a PS5 title in dist/PPSA97358.
+# Link xemu (build-ps5, from ps5/configure-ps5.sh) as a PS5 title in dist/PPSA97372.
 #
 # xemu's own link line is for a desktop executable; this relinks its objects and
 # libraries the way PS5_Vulkan links titles that use RADV (tools/radv-link.sh and

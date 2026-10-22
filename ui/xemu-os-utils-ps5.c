@@ -17,6 +17,7 @@
 
 #include "xemu-os-utils.h"
 #include "xemu-settings.h"
+#include "ui/xemu-ps5-app.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -33,7 +34,7 @@
 #include <ucontext.h>
 #include <unistd.h>
 
-#define XEMU_PS5_DIR "/data/xemu"
+#define XEMU_PS5_DIR "/data/xemu-chihiro"
 #define XEMU_PS5_LOG XEMU_PS5_DIR "/xemu.log"
 
 /* Where the eboot is loaded, and a bound on its code for backtraces. */
@@ -227,7 +228,7 @@ static void crash_handler(int sig, siginfo_t *info, void *context)
     if (xemu_dev_stress_on) {
         write_str("*** stress test: starting XPSemu again\n");
         sceSystemServiceLoadExec("/app0/eboot.bin", NULL);
-        sceSystemServiceLoadExec("/data/homebrew/PPSA97358/eboot.bin", NULL);
+        sceSystemServiceLoadExec("/data/homebrew/" XEMU_PS5_TITLE_ID "/eboot.bin", NULL);
     }
 #endif
     _exit(128 + sig);
@@ -253,7 +254,7 @@ static void report_unresolved_imports(void)
      * but jailbroken, xemu can read where it was installed. */
     static const char *const paths[] = {
         "/app0/imports.txt",
-        "/data/homebrew/PPSA97358/imports.txt",
+        "/data/homebrew/" XEMU_PS5_TITLE_ID "/imports.txt",
     };
     FILE *f = NULL;
     for (size_t i = 0; !f && i < sizeof(paths) / sizeof(paths[0]); i++) {
@@ -764,4 +765,178 @@ void xemu_ps5_blank_hdd(const char *path)
     chmod(path, 0666);
     xemu_ps5_hdd_created = 1;
     fprintf(stderr, "XPSemu: no hard disk: made a blank one, %s\n", path);
+}
+
+/*
+ * XPSemu Chihiro
+ */
+
+typedef struct XpsAppInfo {
+    uint32_t app_id;
+    uint64_t unknown1;
+    char title_id[14];
+    char unknown2[0x3c];
+} XpsAppInfo;
+int sceKernelGetAppInfo(pid_t pid, XpsAppInfo *info);
+
+const char *xemu_ps5_own_title_id(void)
+{
+    static char id[16];
+    static bool asked;
+    if (!asked) {
+        asked = true;
+        XpsAppInfo info;
+        memset(&info, 0, sizeof(info));
+        if (xemu_ps5_import_ok("sceKernelGetAppInfo") &&
+            sceKernelGetAppInfo(getpid(), &info) == 0) {
+            snprintf(id, sizeof(id), "%.*s", (int)strnlen(info.title_id,
+                     sizeof(info.title_id)), info.title_id);
+        }
+        fprintf(stderr, "XPSemu Chihiro: running as %s\n", id[0] ? id : "(unknown)");
+    }
+    return id;
+}
+
+/* The first line of a small text file (malloc'd), or NULL. */
+static char *first_line(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return NULL;
+    }
+    char buf[1024];
+    char *line = fgets(buf, sizeof(buf), f);
+    fclose(f);
+    if (!line) {
+        return NULL;
+    }
+    size_t n = strlen(line);
+    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' ||
+                 line[n - 1] == ' ' || line[n - 1] == '\t')) {
+        line[--n] = 0;
+    }
+    return n ? strdup(line) : NULL;
+}
+
+static const char kEnvTemplate[] =
+    "# XPSemu Chihiro: switches read when the app starts, one NAME=VALUE\n"
+    "# per line ('#' starts a comment). Change, save, restart the app.\n"
+    "#\n"
+    "# Maximum Tune 1/2 export: Gemballa maker and Blackbird's Gemballa\n"
+    "# (in memory, only on the export V307.xbe / V322.xbe; 0 = off)\n"
+    "XEMU_WM1_GEMBALLA=1\n"
+    "XEMU_WM1_BLACKBIRD=1\n"
+    "XEMU_WM1_BLACKBIRD_RIVAL=1\n"
+    "XEMU_WM1_BLACKBIRD_SPECIAL=1\n"
+    "XEMU_WM2_GEMBALLA=1\n"
+    "XEMU_WM2_BLACKBIRD=1\n"
+    "XEMU_WM2_BLACKBIRD_RIVAL=1\n"
+    "XEMU_WM2_KIJIMA=1\n"
+    "#\n"
+    "# 16:9 widescreen for the Chihiro games (1 = on): the 3D shows more at\n"
+    "# the sides, the 2D stays in the middle 4:3.\n"
+    "XEMU_WS_HACK=0\n"
+    "#\n"
+    "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
+    "#XEMU_CHIHIRO_LOG=boot\n";
+
+void xemu_ps5_chihiro_prepare(void)
+{
+    mkdir(XEMU_PS5_DATA_DIR, 0777);
+    mkdir(XEMU_PS5_CHIHIRO_DIR, 0777);
+    mkdir(XEMU_PS5_DATA_DIR "/games", 0777);
+
+    struct stat st;
+    if (stat(XEMU_PS5_ENV_FILE, &st) != 0) {
+        FILE *f = fopen(XEMU_PS5_ENV_FILE, "w");
+        if (f) {
+            fputs(kEnvTemplate, f);
+            fclose(f);
+            chmod(XEMU_PS5_ENV_FILE, 0666);
+            fprintf(stderr, "XPSemu Chihiro: wrote %s\n", XEMU_PS5_ENV_FILE);
+        }
+    }
+
+    FILE *f = fopen(XEMU_PS5_ENV_FILE, "r");
+    if (!f) {
+        fprintf(stderr, "XPSemu Chihiro: no %s (%d)\n", XEMU_PS5_ENV_FILE, errno);
+        return;
+    }
+    bool can_set = xemu_ps5_import_ok("setenv");
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        size_t n = strlen(p);
+        while (n && (p[n - 1] == '\n' || p[n - 1] == '\r' ||
+                     p[n - 1] == ' ' || p[n - 1] == '\t')) {
+            p[--n] = 0;
+        }
+        char *eq = strchr(p, '=');
+        if (!n || p[0] == '#' || !eq || eq == p) {
+            continue;
+        }
+        *eq = 0;
+        char *name = p, *value = eq + 1;
+        size_t k = strlen(name);
+        while (k && (name[k - 1] == ' ' || name[k - 1] == '\t')) {
+            name[--k] = 0;
+        }
+        while (*value == ' ' || *value == '\t') {
+            value++;
+        }
+        if (!can_set) {
+            fprintf(stderr, "XPSemu Chihiro: env %s=%s ignored (no setenv)\n",
+                    name, value);
+            continue;
+        }
+        setenv(name, value, 1);
+        fprintf(stderr, "XPSemu Chihiro: env %s=%s\n", name, value);
+    }
+    fclose(f);
+}
+
+static char xbox_autolaunch[1024];
+
+char *xemu_ps5_chihiro_boot_image(void)
+{
+    struct stat st;
+    const char *id = xemu_ps5_own_title_id();
+    if (id[0] && strcmp(id, XEMU_PS5_TITLE_ID) != 0) {
+        /* A home-screen shortcut: its game, every time it is opened. An
+         * Xbox disc is left to the dashboard (it starts it itself). */
+        char path[128];
+        snprintf(path, sizeof(path), "/data/homebrew/%s/xpsemu-game.txt", id);
+        char *image = first_line(path);
+        if (image && stat(image, &st) == 0 && !xemu_media_is_xbox_disc(image)) {
+            fprintf(stderr, "XPSemu Chihiro: shortcut %s boots %s\n", id, image);
+            return image;
+        }
+        free(image);
+        return NULL;
+    }
+    char *image = first_line(XEMU_PS5_CHIHIRO_BOOT_FILE);
+    unlink(XEMU_PS5_CHIHIRO_BOOT_FILE); /* Once: a crash restarts at the dashboard */
+    if (image && stat(image, &st) == 0) {
+        if (!xemu_media_is_xbox_disc(image)) {
+            fprintf(stderr, "XPSemu Chihiro: the dashboard asked for %s\n", image);
+            return image;
+        }
+        /* An Xbox game picked while a Chihiro ran: the Xbox starts, and its
+         * dashboard starts the game (xemu_ps5_xbox_autolaunch). */
+        snprintf(xbox_autolaunch, sizeof(xbox_autolaunch), "%s", image);
+        fprintf(stderr, "XPSemu Chihiro: the dashboard asked for the Xbox "
+                "game %s\n", image);
+    } else if (image) {
+        fprintf(stderr, "XPSemu Chihiro: can't boot %s\n", image);
+    }
+    free(image);
+    return NULL;
+}
+
+const char *xemu_ps5_xbox_autolaunch(void)
+{
+    return xbox_autolaunch;
 }

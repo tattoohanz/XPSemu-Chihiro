@@ -42,7 +42,7 @@ int xsr_repair_title(const XsrDisk *disk, uint64_t part_off,
                      char *names, size_t names_len);
 
 /* On the running Xbox's hard disk (the machine stopped, the BQL held);
- * the undo records go to /data/xemu/save-repair/. */
+ * the undo records go to /data/xemu-chihiro/save-repair/. */
 int xemu_repair_saves(uint32_t title_id);
 
 /* Writes the Xbox has made to its system and save partitions (C:, E:),

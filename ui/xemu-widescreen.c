@@ -24,6 +24,8 @@
 
 #include "xemu-widescreen.h"
 
+#include <stdlib.h>
+
 static bool g_widescreen = false;
 
 void xemu_set_widescreen(bool widescreen)
@@ -34,4 +36,19 @@ void xemu_set_widescreen(bool widescreen)
 bool xemu_get_widescreen(void)
 {
     return g_widescreen;
+}
+
+float xemu_get_ws_scale(void)
+{
+    static bool checked = false;
+    static float scale = 1.0f;
+
+    if (!checked) {
+        const char *e = getenv("XEMU_WS_HACK");
+        checked = true;
+        if (e && e[0] == '1')
+            scale = (4.0f / 3.0f) / (16.0f / 9.0f);   /* 0.75 */
+    }
+
+    return scale;
 }

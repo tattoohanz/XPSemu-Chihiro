@@ -33,6 +33,15 @@ extern "C" {
 void xemu_set_widescreen(bool widescreen);
 bool xemu_get_widescreen(void);
 
+/* Horizontal clip-space scale applied to every vertex, for titles that
+ * render for a fixed 4:3 output and never read the Xbox video flags - the
+ * Chihiro arcade games in particular, which the EEPROM-driven widescreen
+ * above does nothing for. Narrowing x by 0.75 means stretching the result
+ * to a 16:9 display reveals more of the world instead of distorting it.
+ * Returns 1.0 when disabled. Read once per process: the value is baked
+ * into generated shader source, so changing it needs a restart. */
+float xemu_get_ws_scale(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -6,7 +6,7 @@
 // put back in g_config while the settings file is written (see
 // xemu_settings_save_hook), so a game's values never end up in xemu.toml.
 //
-// Files, in xemu's base path (/data/xemu/ on the PS5):
+// Files, in xemu's base path (/data/xemu-chihiro/ on the PS5):
 //   game-settings/<key>.txt   "option=value" lines, overrides only
 //   playtime.txt              "<key>\t<seconds>\t<last started>" lines
 //

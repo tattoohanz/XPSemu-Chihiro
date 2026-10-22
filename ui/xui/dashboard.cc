@@ -3,7 +3,7 @@
 //
 // A full screen scene in the spirit of the original console's dashboard: a
 // dark green backdrop with a fine curved grid, a large glowing orb, and the
-// menu as angled green bars; the games in /data/xemu/games (general.
+// menu as angled green bars; the games in /data/xemu-chihiro/games (general.
 // games_dir), simple settings and system information as pages. It's drawn
 // with a small number of ImGui draw list primitives (no textures, and no
 // assets from the original dashboard), so it stays light at 4K.
@@ -31,6 +31,7 @@
 #include <set>
 #include <mutex>
 #include <thread>
+#include "ui/xemu-ps5-app.h"
 
 #include "common.hh"
 #include "actions.hh"
@@ -54,6 +55,10 @@
 #include "../../hw/xbox/xemu-save-repair.h"
 #include "../xemu-input.h"
 #include "../xemu-settings.h"
+#include "../xemu-os-utils.h"
+// XPSemu Chihiro (hw/xbox/chihiro/chihiro.h is a C header of QEMU's block
+// layer; only this is needed here).
+extern "C" void chihiro_flush_save_now(void);
 #include "xemu-version.h"
 
 DashboardScene g_dashboard;
@@ -436,7 +441,7 @@ static XemuTexture GameImage(const DashboardScene::Game &game)
 }
 
 // Cover pictures by name key (see CoverKey), from games_dir/covers and
-// /data/xemu/covers; listed again each time the dashboard opens, so covers
+// /data/xemu-chihiro/covers; listed again each time the dashboard opens, so covers
 // added while XPSemu runs show up.
 static std::map<std::string, std::string> g_covers;
 
@@ -513,7 +518,7 @@ static void ListCovers()
     for (const auto &games : GameDirs()) { // Each one's covers folder, first
         dirs.push_back(games + "/covers");
     }
-    dirs.push_back("/data/xemu/covers");
+    dirs.push_back("/data/xemu-chihiro/covers");
     std::error_code ec;
     for (const auto &dir : dirs) {
         if (!std::filesystem::is_directory(dir, ec)) {
@@ -579,7 +584,7 @@ static XemuTexture GameCover(const DashboardScene::Game &game)
 //
 
 //
-// Games' own names (Game settings > Name): /data/xemu/game-names.txt, one
+// Games' own names (Game settings > Name): /data/xemu-chihiro/game-names.txt, one
 // "<key>\t<name>" per line (the key as KeyOf); shown everywhere the game is.
 //
 
@@ -841,6 +846,19 @@ static std::string GamesSignature()
     return sig;
 }
 
+// XPSemu Chihiro: a netboot image starts with its FATX volume.
+static bool IsChihiroImage(const std::string &path)
+{
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) {
+        return false;
+    }
+    char magic[4] = { 0 };
+    bool fatx = fread(magic, 1, 4, f) == 4 && memcmp(magic, "FATX", 4) == 0;
+    fclose(f);
+    return fatx;
+}
+
 void DashboardScene::ScanGames()
 {
     m_games_sig = GamesSignature();
@@ -867,6 +885,22 @@ void DashboardScene::ScanGames()
             const auto &path = entry.path();
             std::string ext = path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (entry.is_regular_file(ec) && ext == ".bin" &&
+                IsChihiroImage(path.string())) {
+                // XPSemu Chihiro: a Chihiro netboot image (FATX).
+                GameArt &art = Art(path.string());
+                if (!art.read) {
+                    art.read = true;
+                    art.stem = path.stem().string();
+                }
+                m_games.push_back({ CleanName(art.stem), path.string(), 0, false });
+                m_games.back().chihiro = true;
+                const std::string *own = GameOwnName(KeyOf(m_games.back()));
+                if (own) {
+                    m_games.back().name = *own;
+                }
+                continue;
+            }
             if (entry.is_regular_file(ec) && (ext == ".iso" || ext == ".xiso")) {
                 GameArt &art = Art(path.string());
                 if (!art.read) {
@@ -905,7 +939,7 @@ void DashboardScene::ScanGames()
 }
 
 // Games without a cover get theirs from xdb by title ID, in the background
-// (cover-download.cc), into /data/xemu/covers where ListCovers looks.
+// (cover-download.cc), into /data/xemu-chihiro/covers where ListCovers looks.
 void DashboardScene::RequestMissingCovers()
 {
     if (!g_config.display.ui.download_covers) {
@@ -920,7 +954,7 @@ void DashboardScene::RequestMissingCovers()
                               COVER_FRONT });
         }
     }
-    CoverDownloadRequest(wants, "/data/xemu/covers");
+    CoverDownloadRequest(wants, "/data/xemu-chihiro/covers");
 }
 
 static bool SetupRecheck(int games); // First run, below
@@ -1115,7 +1149,7 @@ int sceKernelGetAppInfo(pid_t pid, XpsAppInfo *info);
 int xemu_ps5_import_ok(const char *name);
 }
 
-static const char *const kMainTitle = "PPSA97358";
+static const char *const kMainTitle = XEMU_PS5_TITLE_ID;
 static const char *const kHomebrew = "/data/homebrew";
 
 // The title ID this copy of XPSemu runs as ("" if unknown).
@@ -1332,7 +1366,7 @@ static std::string ReadBinary(const std::string &path, size_t max = 64 << 20)
 
 // The shortcut's home-screen backgrounds (sce_sys/pic0.dds, pic1.dds): the
 // game's own art from the LaunchBox Games Database (kept in
-// /data/xemu/backgrounds), filling 3840x2160, in BC7 like XPSemu's own (its
+// /data/xemu-chihiro/backgrounds), filling 3840x2160, in BC7 like XPSemu's own (its
 // header reused). "" if made, else why not (XPSemu's stay).
 static std::string MakeBackground(const ShortcutJob &job, const std::string &stage)
 {
@@ -1457,9 +1491,9 @@ static std::string MakeShortcut(const ShortcutJob &job)
     }
     ReplaceAll(param, kMainTitle, id);
     // A content ID of its own too (XPSemu's would be a duplicate).
-    ReplaceAll(param, "XEMUPS5000000001", "XPSEMUSC000" + id.substr(4));
-    ReplaceAll(param, "\"titleName\": \"XPSemu\"", "\"titleName\": \"" + name + "\"");
-    ReplaceAll(param, "\"conceptId\": \"97358\"", "\"conceptId\": \"" + id.substr(4) + "\"");
+    ReplaceAll(param, XEMU_PS5_CONTENT_SUFFIX, "XPSCHISC000" + id.substr(4));
+    ReplaceAll(param, "\"titleName\": \"" XEMU_PS5_TITLE_NAME "\"", "\"titleName\": \"" + name + "\"");
+    ReplaceAll(param, "\"conceptId\": \"" XEMU_PS5_CONCEPT_ID "\"", "\"conceptId\": \"" + id.substr(4) + "\"");
     param += "\n";
     std::string game = job.iso + "\n";
     std::vector<uint8_t> png;
@@ -1589,6 +1623,14 @@ void DashboardScene::Show()
     // (loaded now, in the startup stall), else straight away.
     if (m_startup_fade) {
         m_autolaunch = ShortcutGame();
+        // XPSemu Chihiro: the Chihiro this start was made for, or the Xbox
+        // game the dashboard asked for while a Chihiro ran.
+        if (m_autolaunch.empty() && xemu_chihiro_mode()) {
+            m_autolaunch = xemu_chihiro_image();
+        }
+        if (m_autolaunch.empty()) {
+            m_autolaunch = xemu_ps5_xbox_autolaunch();
+        }
         RemoveOldShortcuts();
         UiMusicPrepare();
         // The logo first (the music after it), else the music a little in.
@@ -1606,6 +1648,11 @@ void DashboardScene::Show()
     if (runstate_is_running()) {
         vm_stop(RUN_STATE_PAUSED);
         m_paused_vm = true;
+    }
+    // XPSemu Chihiro: the cabinet's backup is written when the app exits,
+    // which closing it from the PS5's menu skips: write it now too.
+    if (xemu_chihiro_mode() && m_game_started) {
+        chihiro_flush_save_now();
     }
 }
 
@@ -1650,8 +1697,51 @@ void DashboardScene::Launch(const Game &game, bool quiet)
     ParkThen([this, copy, quiet]() { LaunchNow(copy, quiet); });
 }
 
+// XPSemu Chihiro: the machine follows the image, and a Chihiro's image is
+// mapped into its media board when the machine is made: another machine or
+// another Chihiro game starts the app again with it (xemu_ps5_chihiro_boot_
+// image takes the request).
+static void RestartFor(const std::string &path)
+{
+    FILE *f = fopen(XEMU_PS5_CHIHIRO_BOOT_FILE, "w");
+    if (f) {
+        fprintf(f, "%s\n", path.c_str());
+        fclose(f);
+    }
+    fprintf(stderr, "XPSemu Chihiro: restarting for %s\n", path.c_str());
+}
+
 void DashboardScene::LaunchNow(const Game &game, bool quiet)
 {
+    bool here = xemu_chihiro_mode() && game.chihiro &&
+                game.path == xemu_chihiro_image();
+    if (xemu_chihiro_mode() != game.chihiro || (game.chihiro && !here)) {
+        RestartFor(game.path);
+        xemu_queue_notification(game.chihiro ? "Starting the Chihiro..." :
+                                               "Starting the Xbox...");
+        QuitAppNow(true);
+        return;
+    }
+    if (game.chihiro) {
+        if (m_game_started) {
+            Hide(); // It is this one, already running
+            return;
+        }
+        m_now_playing_path = game.path;
+        GameStart(KeyOf(game));
+        CurtainStart(game, quiet);
+        GameLogStart({ game.name, game.path, KeyOf(game), "Chihiro", 0, false,
+                       "", "" });
+        if (!quiet) {
+            UiSoundPlay(UI_SOUND_LAUNCH);
+        }
+        AddRecent(game.path);
+        m_can_return = true;
+        m_game_started = true;
+        m_paused_vm = true; // Hide starts it (-S: it has never run)
+        Hide();
+        return;
+    }
     ActionLoadDiscFile(game.path.c_str());
     m_now_playing_path = game.path;
     GameStart(KeyOf(game)); // Its own settings, and its play time
@@ -2204,7 +2294,7 @@ static void StressWatchdog()
             xemu_dev_journal('W', "UI stopped for 45 s");
             fprintf(stderr, "XPSemu: stress test: the UI stopped, starting again\n");
             sceSystemServiceLoadExec("/app0/eboot.bin", NULL);
-            sceSystemServiceLoadExec("/data/homebrew/PPSA97358/eboot.bin", NULL);
+            sceSystemServiceLoadExec("/data/homebrew/" XEMU_PS5_TITLE_ID "/eboot.bin", NULL);
         }
     }
 }
@@ -2370,7 +2460,7 @@ void DashboardScene::DrawDev(float s, float a, float x, float y, float ay2)
         lines.push_back(l);
     }
     lines.push_back("");
-    lines.push_back("Full report: /data/xemu/dev/report.txt");
+    lines.push_back("Full report: /data/xemu-chihiro/dev/report.txt");
 
     float px = x + 960 * s, py = y, size = 28 * s, line = 40 * s;
     float maxw = 1880 * s - px;
@@ -2398,6 +2488,11 @@ void DashboardScene::QuitAppNow(bool restart)
         WatchStop();
         GameLogStop(restart ? "XPSemu restarted" : "XPSemu exited");
     }
+    // XPSemu Chihiro: LoadExec replaces the process without the exit
+    // notifiers that write the cabinet's backup.
+    if (xemu_chihiro_mode()) {
+        chihiro_flush_save_now();
+    }
     xemu_settings_save();
     if (g_shortcuts_changed) {
         ShadowMountScan(); // Again, so nothing waits for its next round
@@ -2411,7 +2506,7 @@ void DashboardScene::QuitAppNow(bool restart)
         fprintf(stderr, "XPSemu: no sceSystemServiceLoadExec\n");
     } else if (restart) {
         for (const char *path : { "/app0/eboot.bin",
-                                  "/data/homebrew/PPSA97358/eboot.bin" }) {
+                                  "/data/homebrew/" XEMU_PS5_TITLE_ID "/eboot.bin" }) {
             int rc = sceSystemServiceLoadExec(path, NULL);
             fprintf(stderr, "XPSemu: restart via %s refused (%#x)\n", path, rc);
         }
@@ -2511,6 +2606,11 @@ float DashboardScene::BurnAt(double when) const
 
 void DashboardScene::StopGameNow(const char *why)
 {
+    // XPSemu Chihiro: a Chihiro stops by starting again as the Xbox.
+    if (xemu_chihiro_mode()) {
+        QuitAppNow(true);
+        return;
+    }
     const char *dvd = g_config.sys.files.dvd_path;
     if (dvd && dvd[0]) {
         ActionEjectDisc();
@@ -2662,9 +2762,9 @@ void DashboardScene::ChangeSetting(int step)
 // Xbox-Magic-Patches-by-Jay) for the game in Game settings > Game patches,
 // under the ones already there. The list of them is built in
 // (ps5/make-patch-catalog.py); a patch's file is downloaded when the page
-// opens (into /data/xemu/patch-store, a few KB), checked against this
+// opens (into /data/xemu-chihiro/patch-store, a few KB), checked against this
 // copy's code exactly as the patches in use are, and Get puts it in
-// /data/xemu/patches/store/<author>/, on. Getting a widescreen patch sets
+// /data/xemu-chihiro/patches/store/<author>/, on. Getting a widescreen patch sets
 // the game to 16:9, a 720p one turns on the Xbox's 720p, a 480i fix its
 // 480p. 128 MB patches need more memory than XPSemu gives the Xbox.
 //
@@ -4630,7 +4730,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
             m_gs_row < GO__COUNT ? GameOptionHelp(m_gs_row) :
             m_gs_row == GS_PATCHES ?
                 "Widescreen, 60 FPS and other fixes from .JMP files in "
-                "/data/xemu/patches, applied as the game loads: the disc "
+                "/data/xemu-chihiro/patches, applied as the game loads: the disc "
                 "image isn't changed." :
             m_gs_row == GS_NAME ?
                 "The name shown for it everywhere in XPSemu. Clear it for "
@@ -4691,7 +4791,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
              "No patches for this game yet");
         std::string how =
             std::string("Put .JMP patch files (from the Xbox Patch Hub at "
-                        "jayxbox.com) in /data/xemu/patches. This game's "
+                        "jayxbox.com) in /data/xemu-chihiro/patches. This game's "
                         "title ID is ") +
             (m_gs_game.title_id ? id : "unknown") +
             ": a patch is for the game whose ID is on its version= line.";
@@ -5027,7 +5127,7 @@ static XemuTexture DrawCase(const DashboardScene::Game &game, ImVec2 tl,
 // covers as it turns, a shadow under it, and the cover blurred behind.
 //
 
-// A game's back cover or spine: /data/xemu/covers/<TITLEID>.back.jpg /
+// A game's back cover or spine: /data/xemu-chihiro/covers/<TITLEID>.back.jpg /
 // .spine.jpg, downloaded from xdb the first time it's wanted.
 static XemuTexture GamePart(const DashboardScene::Game &game, CoverPart part)
 {
@@ -5038,14 +5138,14 @@ static XemuTexture GamePart(const DashboardScene::Game &game, CoverPart part)
         tried = true;
         art.parts_asked = ImGui::GetTime();
         char file[64];
-        snprintf(file, sizeof(file), "/data/xemu/covers/%08X%s", game.title_id,
+        snprintf(file, sizeof(file), "/data/xemu-chihiro/covers/%08X%s", game.title_id,
                  part == COVER_BACK ? ".back.jpg" : ".spine.jpg");
         std::error_code ec;
         if (std::filesystem::exists(file, ec)) {
             DecodeRequest({ game.path, file, 1024, part });
         } else {
             CoverDownloadRequest({ { game.title_id, {}, part } },
-                                 "/data/xemu/covers");
+                                 "/data/xemu-chihiro/covers");
         }
     }
     return tex;
@@ -5397,7 +5497,7 @@ void DashboardScene::DrawGames(float s, float a)
         Text(dl, font, 56 * s, ImVec2(280 * s + slide, 330 * s), White(a),
              "No games yet");
         Text(dl, small, 34 * s, ImVec2(280 * s + slide, 410 * s), Label(a),
-             "Put your .iso games in /data/xemu/games");
+             "Put your .bin (Chihiro) and .iso (Xbox) games in /data/xemu-chihiro/games");
         return;
     }
 
@@ -5749,7 +5849,7 @@ void DashboardScene::DrawGameArt(const Game &game, ImVec2 p0, ImVec2 p1,
 // the screen empty, panels after the Xbox 360's "Blades" dashboard instead
 // of black: glossy orange, a cream frame and a silver blade (original art
 // in that style: ps5/art/make-blades.py). Your own instead:
-// /data/xemu/blades-left.png and blades-right.png (blades-green-*.png for
+// /data/xemu-chihiro/blades-left.png and blades-right.png (blades-green-*.png for
 // green). Only while a game runs,
 // with the dashboard and the launch screen gone. Called by RenderFramebuffer
 // (vk-helpers.cc) with the game's box.
@@ -6164,10 +6264,10 @@ void DashboardScene::DrawSettings(float s, float a)
         { "Volume", "How loud the games are." },
         { "Menu sounds",
           "The dashboard's ticks and chimes. Your own: WAVs in "
-          "/data/xemu/sounds." },
+          "/data/xemu-chihiro/sounds." },
         { "Music",
           "Music in the dashboard, fading out when a game plays. Your own: "
-          "/data/xemu/sounds/music.wav." },
+          "/data/xemu-chihiro/sounds/music.wav." },
         { "Performance overlay",
           "Frame rate, CPU and memory in the corner while you play." },
         { "Download covers",
@@ -6755,56 +6855,69 @@ static std::vector<SetupItem> g_setup_items;
 
 static bool SetupRecheck(int games)
 {
-    auto size_of = [](const char *p) -> long long {
+    auto size_of = [](const std::string &p) -> long long {
         std::error_code ec;
-        if (!p || !p[0]) {
+        if (p.empty()) {
             return -1;
         }
         auto n = std::filesystem::file_size(p, ec);
         return ec ? -1 : (long long)n;
     };
-    g_setup_items.clear();
-    auto add = [&](const char *name, const char *what, const char *path,
-                   long long want) {
-        SetupItem it{ name, what, path && path[0] ? path : "(not set)", "",
-                      false, true };
-        long long n = size_of(path);
-        if (n < 0) {
-            it.status = "Missing";
-        } else if (want > 0 && n != want) {
-            it.status = "Wrong size: " + std::to_string(n) + " bytes, needs " +
-                        std::to_string(want);
-        } else {
-            it.status = "Found";
-            it.ok = true;
-        }
-        g_setup_items.push_back(it);
+    // XPSemu Chihiro: three tiles, the Chihiro's BIOS, its media board files
+    // (beside the BIOS), and the Xbox's files for Xbox games. Either machine
+    // with all its files is enough to go on.
+    struct File {
+        std::string path;
+        long long want;
     };
-    add("MCPX boot ROM", "The Xbox's 512-byte boot ROM",
-        g_config.sys.files.bootrom_path, 512);
-    add("Flash BIOS", "The Xbox BIOS, e.g. Complex 4627",
-        g_config.sys.files.flashrom_path, 0);
-    add("Hard disk image", "A prepared Xbox hard disk",
-        g_config.sys.files.hdd_path, 0);
-#ifdef __PROSPERO__
-    extern int xemu_ps5_hdd_created;
-    if (xemu_ps5_hdd_created && g_setup_items.back().ok) {
-        g_setup_items.back().status = "Made by XPSemu";
-    }
-#endif
+    auto check = [&](const char *name, const char *what,
+                     const std::vector<File> &files, const std::string &shown) {
+        SetupItem it{ name, what, shown.empty() ? "(not set)" : shown, "",
+                      true, true };
+        std::string missing;
+        for (const File &f : files) {
+            long long n = size_of(f.path);
+            std::string base = f.path.substr(f.path.rfind('/') + 1);
+            if (n < 0 || (f.want > 0 && n != f.want)) {
+                it.ok = false;
+                missing += (missing.empty() ? "" : ", ") + base +
+                           (n < 0 ? "" : " (wrong size)");
+            }
+        }
+        it.status = it.ok ? "Found" : "Missing: " + missing;
+        return it;
+    };
+    g_setup_items.clear();
+    std::string bios = g_config.chihiro.roms.bios_path;
+    std::string cdir = bios.find('/') != std::string::npos ?
+                           bios.substr(0, bios.rfind('/') + 1) :
+                           std::string(XEMU_PS5_CHIHIRO_DIR "/");
+    g_setup_items.push_back(check("Chihiro BIOS",
+                                  "chihiro_xbox_bios.bin (MAME's chihiro set)",
+                                  { { bios, 0x80000 } }, bios));
+    g_setup_items.push_back(check("Media board files",
+                                  "The media board's flash and EEPROMs",
+                                  { { cdir + "fpr21042_m29w160et.bin", 0 },
+                                    { cdir + "ic10_g24lc64.bin", 8192 },
+                                    { cdir + "pc20_g24lc64.bin", 8192 },
+                                    { cdir + "ic11_24lc024.bin", 128 } },
+                                  cdir));
+    g_setup_items.push_back(check("Xbox files",
+                                  "For Xbox games: MCPX boot ROM and BIOS",
+                                  { { g_config.sys.files.bootrom_path, 512 },
+                                    { g_config.sys.files.flashrom_path, 0 } },
+                                  g_config.sys.files.flashrom_path));
+    bool chihiro_ok = g_setup_items[0].ok && g_setup_items[1].ok;
+    bool xbox_ok = g_setup_items[2].ok;
     g_setup_items.push_back(
-        { "Games", "Your .iso games (you can add them later)",
+        { "Games", "Your .bin (Chihiro) and .iso (Xbox) games (you can add "
+                   "them later)",
           std::string(g_config.general.games_dir[0] ?
                           g_config.general.games_dir :
-                          "/data/xemu/games"),
+                          XEMU_PS5_DATA_DIR "/games"),
           games ? std::to_string(games) + " found" : "None yet", games > 0,
           false });
-
-    bool missing = false;
-    for (const auto &it : g_setup_items) {
-        missing |= it.required && !it.ok;
-    }
-    return missing;
+    return !chihiro_ok && !xbox_ok;
 }
 
 bool DashboardSetupNeeded()
@@ -6841,14 +6954,16 @@ void DashboardScene::DrawSetup(float s, float a)
                      ImVec2(ec.x + r, ec.y + r), ImVec2(0, 0), ImVec2(1, 1),
                      White(a));
     }
-    const char *title = m_setup_ok ? "You're all set!" : "Welcome to XPSemu";
+    const char *title = m_setup_ok ? "You're all set!" :
+                                     "Welcome to XPSemu Chihiro";
     ImVec2 ts = TextSize(big, 64 * s, title);
     Text(dl, big, 64 * s, ImVec2(cx - ts.x / 2, 310 * s), White(a), title);
     const char *sub = m_setup_ok ?
         "Every file is in place. Press Cross and XPSemu starts with them." :
-        "XPSemu needs the MCPX boot ROM and the BIOS from your own Xbox (the "
-        "hard disk is made for you). Copy them to /data/xemu on the PS5 (FTP): "
-        "each turns green when it's there.";
+        "Chihiro games need the Chihiro BIOS and the media board files in "
+        XEMU_PS5_CHIHIRO_DIR "; Xbox games the MCPX boot ROM and the BIOS "
+        "from your own Xbox in " XEMU_PS5_DATA_DIR " (the hard disk is made "
+        "for you). Copy them over FTP: each turns green when it's there.";
     float sw = 1300 * s;
     ImVec2 ss = small->CalcTextSizeA(30 * s, FLT_MAX, sw, sub);
     Text(dl, small, 30 * s, ImVec2(cx - std::min(ss.x, sw) / 2, 395 * s),

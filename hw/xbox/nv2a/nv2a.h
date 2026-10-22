@@ -30,4 +30,12 @@ unsigned int nv2a_get_surface_scale_factor(void);
 const uint8_t *nv2a_get_dac_palette(void);
 int nv2a_get_screen_off(void);
 
+/* XPSemu Chihiro: the desktop fork keys its shader seeds on the game's
+ * name; this build has none, so the Chihiro code's call does nothing. */
+static inline void nv2a_set_game_name(const char *name, const char *before)
+{
+    (void)name;
+    (void)before;
+}
+
 #endif

@@ -2,7 +2,7 @@
  * XPSemu: dev builds
  *
  * 1 in dev builds (ps5/build-dev.sh sets it while it builds), 0 in releases.
- * A dev build keeps a crash journal (/data/xemu/dev/journal.txt), has a
+ * A dev build keeps a crash journal (/data/xemu-chihiro/dev/journal.txt), has a
  * stress test that plays every game in turn with a button bot, and shows
  * how stable it was on the System page. None of it is in a release.
  *

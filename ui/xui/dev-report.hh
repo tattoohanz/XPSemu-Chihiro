@@ -21,6 +21,6 @@ struct DevReport {
     std::vector<std::string> summary; // a few lines for the System page
 };
 
-// Reads /data/xemu/dev/journal.txt, writes /data/xemu/dev/report.txt (every
+// Reads /data/xemu-chihiro/dev/journal.txt, writes /data/xemu-chihiro/dev/report.txt (every
 // crash with its functions, each game, each session) and returns the totals.
 DevReport DevReportBuild();

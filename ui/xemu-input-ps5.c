@@ -231,7 +231,7 @@ static int16_t trigger(uint8_t v)
 /*
  * XPSemu: the Xbox controller's buttons and triggers can each come from any
  * of the DualSense's (Settings > Controller), kept in
- * /data/xemu/controller.txt. The touchpad stays the Guide button (it opens
+ * /data/xemu-chihiro/controller.txt. The touchpad stays the Guide button (it opens
  * the dashboard), the sticks stay the sticks. The dashboard follows the
  * layout too (xemu_ps5_pad_ui_buttons gives the standard one).
  */

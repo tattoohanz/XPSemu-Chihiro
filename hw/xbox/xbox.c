@@ -31,6 +31,7 @@
 #include "net/net.h"
 #include "hw/boards.h"
 #include "hw/ide/pci.h"
+#include "ui/xemu-settings.h"
 #include "system/system.h"
 #include "system/kvm.h"
 #include "kvm/kvm_i386.h"
@@ -57,6 +58,7 @@
 
 #include "hw/xbox/xbox.h"
 #include "smbus.h"
+#include "chihiro/chihiro.h"
 
 #define MAX_IDE_BUS 2
 
@@ -291,6 +293,10 @@ void xbox_init_common(MachineState *machine,
                              OBJECT(pit), &error_fatal);
     isa_realize_and_unref(pcms->pcspk, isa_bus, &error_fatal);
 
+    if (XBOX_MACHINE(machine)->chihiro) {
+        chihiro_ide_interface_init();
+    }
+
     PCIDevice *dev = pci_create_simple(pci_bus, PCI_DEVFN(9, 0), "piix3-ide");
     pci_ide_create_devs(dev);
     // idebus[0] = qdev_get_child_bus(&dev->qdev, "ide.0");
@@ -345,6 +351,153 @@ void xbox_init_common(MachineState *machine,
     if (isa_bus_out) {
         *isa_bus_out = isa_bus;
     }
+
+    /* A real Chihiro is an Xbox with add-on boards. The machine property
+     * adds the mediaboard LPC I/O device, which provides the XBAM
+     * identification string that SEGABOOT checks to detect the baseboard. */
+    if (XBOX_MACHINE(machine)->chihiro) {
+        gint64 init_t0 = g_get_monotonic_time();
+        printf("Chihiro: enabling the media board\n");
+
+        chihiro_freeplay_setting = g_config.chihiro.settings.freeplay;
+
+        /* The media board files were loaded with the BIOS (vl.c): the paths
+         * set in Settings > System > Chihiro Files, else the files beside the
+         * BIOS. */
+        if (!chihiro_flash_rom_loaded()) {
+            fprintf(stderr, "Chihiro: ERROR — Flash ROM media board not found "
+                    "(fpr21042_m29w160et.bin). Set path in Settings > System > "
+                    "Chihiro Files.\n");
+        }
+
+        isa_create_simple(isa_bus, "chihiro-lpc");
+        /* The Super I/O is not added here: -device lpc47m157 plugs one in,
+         * and -serial then gets what SEGABOOT and the games print. */
+
+        /* Chihiro southbridge has revision >= 0xB4. This clears bit 0 of
+         * XboxHardwareInfo in the kernel, selecting PATH_B for USB topology
+         * (direct port mapping instead of hub-based). Without this, the
+         * kernel uses PATH_A which requires device table state=1 that LLE
+         * USB entries never reach. */
+        PCIDevice *lpc = pci_find_device(pci_bus, 0, PCI_DEVFN(1, 0));
+        if (lpc) {
+            pci_config_set_revision(lpc->config, 0xB4);
+            printf("Chihiro: LPC bridge revision set to 0xB4 (PATH_B)\n");
+        }
+
+        /* Chihiro: disable Xbox EEPROM persistence.
+         * The service menu writes video/region settings that can corrupt
+         * subsequent boots. Game settings are in ic11/extmem (save system).
+         * Commented out: it never took effect, as the EEPROM device is
+         * created after the board (vl.c), so the EEPROM is written back.
+        Object *eeprom_obj = object_resolve_path_type("", "smbus-storage", NULL);
+        if (eeprom_obj) {
+            object_property_set_bool(eeprom_obj, "persist", false, NULL);
+        }
+         */
+
+        chihiro_ide_load_rom();
+
+        /* Load pre-built FATX netboot image into DIMM buffer */
+        {
+            const char *dvd = xemu_chihiro_image();
+            if (dvd && strlen(dvd) > 0) {
+                uint32_t fs_size = 0;
+                uint8_t *fs_buf = chihiro_fatx_get_buffer(&fs_size);
+                if (fs_buf) {
+                    FILE *f = qemu_fopen(dvd, "rb");
+                    if (f) {
+                        uint8_t magic[4];
+                        if (fread(magic, 1, 4, f) == 4 &&
+                            memcmp(magic, "FATX", 4) == 0) {
+                            rewind(f);
+                            gint64 t0 = g_get_monotonic_time();
+                            struct stat st;
+                            fstat(fileno(f), &st);
+                            uint32_t file_size = (uint32_t)st.st_size;
+                            if (file_size > fs_size) file_size = fs_size;
+                            size_t nread = fread(fs_buf, 1, file_size, f);
+                            printf("Chihiro: FATX image loaded '%s'"
+                                   " (%zu bytes, %lld ms)\n",
+                                   dvd, nread,
+                                   (long long)(g_get_monotonic_time() - t0)
+                                   / 1000);
+
+                            /* The game executable, from the image's boot.id */
+                            for (uint32_t off = 0;
+                                 off + CHIHIRO_BOOTID_LEN <= file_size; off++) {
+                                char name[64];
+                                if (memcmp(fs_buf + off, "BTID", 4) == 0 &&
+                                    chihiro_bootid_executable(fs_buf + off, name,
+                                                              sizeof(name))) {
+                                    chihiro_set_game_executable(name);
+                                    break;
+                                }
+                            }
+                        } else {
+                            fprintf(stderr,
+                                    "Chihiro: '%s' is not a FATX image\n",
+                                    dvd);
+                        }
+                        fclose(f);
+                    }
+                }
+                /* The image's folder, where a boot.id file may sit
+                 * (chihiro_capture_game_filename_from_dir) */
+                snprintf(chihiro_game_dir, sizeof(chihiro_game_dir),
+                         "%s", dvd);
+                char *slash = strrchr(chihiro_game_dir, '/');
+                if (!slash) slash = strrchr(chihiro_game_dir, '\\');
+                if (slash) *slash = '\0';
+            }
+        }
+
+        /* The Chihiro BIOS jamtable writes to SMBus device 0x6A (Focus
+         * FS454 video encoder) during early boot. Without this device,
+         * the SMBus transaction never completes and boot hangs. */
+        smbus_fs454_init(smbus, 0x6A);
+
+        /* Chihiro baseboard USB: AN2131 QC + SC
+         *
+         * On real hardware, the AN2131 chips load firmware from their
+         * I2C EEPROMs (ic10/pc20) at power-up (~200-500ms).
+         *
+         * We create the devices with auto_attach=0 (set in realize), then
+         * attach them 50 ms (QC) and 100 ms (SC) after each OHCI bus start
+         * (chihiro_on_ohci_bus_start). */
+        USBBus *usb0_bus = NULL;
+        for (int i = 0; i < 4 && !usb0_bus; i++) {
+            char bn[32]; snprintf(bn, sizeof(bn), "usb-bus.%d", i);
+            BusState *bs = qdev_get_child_bus(DEVICE(usb0), bn);
+            if (bs) usb0_bus = USB_BUS(bs);
+        }
+
+        if (usb0_bus &&
+            (!chihiro_ic10_data || !chihiro_pc20_data || !chihiro_ic11_data)) {
+            /* Their realize needs the dumps and usb_create_simple aborts on
+             * failure; the startup check has already told the user. */
+            fprintf(stderr, "Chihiro: QC/SC USB devices not created "
+                    "(ic10, pc20 or ic11 EEPROM dump missing)\n");
+        } else if (usb0_bus) {
+            /* Create but don't attach (auto_attach=0 in realize) */
+            USBDevice *qc = usb_create_simple(usb0_bus, "chihiro-an2131qc");
+            USBDevice *sc = usb_create_simple(usb0_bus, "chihiro-an2131sc");
+            printf("Chihiro: QC created port=%d (not attached yet)\n",
+                   qc->port ? qc->port->index : -1);
+            printf("Chihiro: SC created port=%d (not attached yet)\n",
+                   sc->port ? sc->port->index : -1);
+
+            /* Store globally for the hotplug timer */
+            chihiro_usb_set_devices(qc, sc);
+
+            /* Load per-game saves (ic11 + extmem) and register exit flusher */
+            chihiro_save_init();
+        } else {
+            printf("Chihiro: WARNING — could not find USB bus on OHCI\n");
+        }
+        printf("Chihiro: init complete (%lld ms)\n",
+               (long long)(g_get_monotonic_time() - init_t0) / 1000);
+    }
 }
 
 static char *machine_get_bootrom(Object *obj, Error **errp)
@@ -360,6 +513,17 @@ static void machine_set_bootrom(Object *obj, const char *value, Error **errp)
 
     g_free(ms->bootrom);
     ms->bootrom = g_strdup(value);
+}
+
+/* CHIHIRO (not upstream) */
+static bool machine_get_chihiro(Object *obj, Error **errp)
+{
+    return XBOX_MACHINE(obj)->chihiro;
+}
+
+static void machine_set_chihiro(Object *obj, bool value, Error **errp)
+{
+    XBOX_MACHINE(obj)->chihiro = value;
 }
 
 static char *machine_get_avpack(Object *obj, Error **errp)
@@ -468,6 +632,11 @@ static void xbox_machine_options(MachineClass *m)
     object_class_property_add_str(oc, "bootrom", machine_get_bootrom,
                                   machine_set_bootrom);
     object_class_property_set_description(oc, "bootrom", "Xbox bootrom file");
+
+    object_class_property_add_bool(oc, "chihiro", machine_get_chihiro,
+                                   machine_set_chihiro);
+    object_class_property_set_description(
+        oc, "chihiro", "Sega Chihiro: media board, baseboard and 128 MiB");
 
     object_class_property_add_str(oc, "avpack", machine_get_avpack,
                                   machine_set_avpack);
