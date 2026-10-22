@@ -440,6 +440,12 @@ const MemoryRegionOps ep_ops = {
     .write = ep_write,
 };
 
+/* Out of reset and running (the GPRST/EPRST bits) */
+static bool gp_ep_enabled(uint32_t rst)
+{
+    return (rst & NV_PAPU_GPRST_GPRST) && (rst & NV_PAPU_GPRST_GPDSPRST);
+}
+
 void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
 {
     /* Write VP results to the GP DSP MIXBUF */
@@ -467,11 +473,17 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
             /* XPSemu Chihiro diagnostic: a frame that never halts. */
             if (!gp_told && get_clock() - gp_t0 > 2000000000LL) {
                 gp_told = true;
-                fprintf(stderr, "APU: GP DSP still running after 2 s in one "
-                        "frame (%u cycles)\n",
-                        dsp_get_cycle_count(d->gp.dsp));
+                mcpx_apu_log("APU: GP DSP still running after 2 s in one "
+                             "frame (%u cycles)\n",
+                             dsp_get_cycle_count(d->gp.dsp));
             }
-        } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime);
+            /* XPSemu Chihiro: the interpreter can take a whole frame; a
+             * waiting Xbox CPU gets the lock between chunks. The GP stops
+             * here if the guest holds it in reset meanwhile, or on pause. */
+            mcpx_apu_yield_lock(d);
+        } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime &&
+                 gp_ep_enabled(d->gp.regs[NV_PAPU_GPRST]) &&
+                 !d->pause_requested);
         g_dbg.gp.cycles = dsp_get_cycle_count(d->gp.dsp);
         mcpx_apu_stats_dsp(false, g_dbg.gp.cycles,
                            (get_clock() - gp_t0) / 1000);
@@ -502,11 +514,14 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
                 dsp_run(d->ep.dsp, 1000);
                 if (!ep_told && get_clock() - ep_t0 > 2000000000LL) {
                     ep_told = true;
-                    fprintf(stderr, "APU: EP DSP still running after 2 s in "
-                            "one frame (%u cycles)\n",
-                            dsp_get_cycle_count(d->ep.dsp));
+                    mcpx_apu_log("APU: EP DSP still running after 2 s in "
+                                 "one frame (%u cycles)\n",
+                                 dsp_get_cycle_count(d->ep.dsp));
                 }
-            } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime);
+                mcpx_apu_yield_lock(d);
+            } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime &&
+                     gp_ep_enabled(d->ep.regs[NV_PAPU_EPRST]) &&
+                     !d->pause_requested);
             g_dbg.ep.cycles = dsp_get_cycle_count(d->ep.dsp);
             mcpx_apu_stats_dsp(true, g_dbg.ep.cycles,
                                (get_clock() - ep_t0) / 1000);
