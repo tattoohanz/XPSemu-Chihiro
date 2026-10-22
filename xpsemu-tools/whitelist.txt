@@ -2,3 +2,4 @@
 # One title ID per line. Only listed titles get jailbroken.
 # Lines starting with '#' are comments.
 PPSA97358
+PPSA97372

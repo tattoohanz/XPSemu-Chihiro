@@ -29,7 +29,10 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
 - `XEMU_WM1_*`, `XEMU_WM2_*`: the Maximum Tune export Gemballa patches
   (in memory; only on V307.xbe / V322.xbe export). On by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
-  to 16:9 too.
+  to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
+  `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
+- `XEMU_DEPTH_READ_LAG`, `XEMU_ZETA_REUSE_LARGER`, `XEMU_CUBE_FROM_SURFACES`,
+  `XEMU_GPU_BLIT`: PS5 speed-ups, on by default; 0 does it as XPSemu does.
 - `XEMU_CHIHIRO_LOG=boot,jvs,card,...`: Chihiro log categories in xemu.log.
 
 ## Controls (Chihiro)
