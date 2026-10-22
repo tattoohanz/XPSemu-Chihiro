@@ -853,6 +853,10 @@ static const char kEnvTemplate[] =
     "# (Ollie King's smaller passes; 0 = drop and recreate it as before)\n"
     "XEMU_ZETA_REUSE_LARGER=1\n"
     "#\n"
+    "# A cubemap whose six faces the game renders is copied on the PS5 GPU\n"
+    "# (OutRun 2's reflections; 0 = read the faces back to RAM as before)\n"
+    "XEMU_CUBE_FROM_SURFACES=1\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 
