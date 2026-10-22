@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define DRIVEBOARD_RESP_SIZE 8
 
@@ -90,6 +91,8 @@ bool     driveboard_has_response(DriveBoardState *db);
 uint8_t  driveboard_get_response(DriveBoardState *db);
 uint16_t driveboard_get_rumble(DriveBoardState *db);
 void     driveboard_get_ffb(DriveBoardState *db, DriveBoardFFB *out);
+/* XPSemu Chihiro: the game log's "drive board" line (log only) */
+void     driveboard_diag_format(char *buf, size_t size);
 
 extern DriveBoardState *chihiro_driveboard_global;
 
