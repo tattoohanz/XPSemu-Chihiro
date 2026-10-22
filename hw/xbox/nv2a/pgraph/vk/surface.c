@@ -2101,9 +2101,14 @@ void pgraph_vk_surface_update(NV2AState *d, bool upload, bool color_write,
     }
 
     // Sanity check color and zeta dimensions match
+    /* XPSemu Chihiro: or the depth buffer is larger (zeta_reuse_larger);
+     * the framebuffer takes the color target's size */
     if (r->color_binding && r->zeta_binding) {
-        assert(r->color_binding->width == r->zeta_binding->width);
-        assert(r->color_binding->height == r->zeta_binding->height);
+        assert(r->zeta_binding->width >= r->color_binding->width);
+        assert(r->zeta_binding->height >= r->color_binding->height);
+        assert(zeta_reuse_larger() ||
+               (r->color_binding->width == r->zeta_binding->width &&
+                r->color_binding->height == r->zeta_binding->height));
     }
 
     expire_old_surfaces(d);
