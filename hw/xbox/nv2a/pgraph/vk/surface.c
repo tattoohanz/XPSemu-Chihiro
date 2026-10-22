@@ -480,7 +480,8 @@ static uint32_t pgraph_vk_dl_count[PGRAPH_VK_DL__COUNT];
 void pgraph_vk_dl_causes_format(char *buf, size_t size)
 {
     static const char *const names[PGRAPH_VK_DL__COUNT] = {
-        "other", "CPU", "sync", "blit source", "blit destination", "texture",
+        "other", "CPU", "CPU depth read (not waited for)", "sync",
+        "blit source", "blit destination", "texture",
         "vertices", "overlap", "other shape", "old", "flush",
     };
     size_t len = 0;
@@ -516,6 +517,7 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
                                    DIRTY_MEMORY_NV2A_TEX);
 
     surface->download_pending = false;
+    surface->download_nowait = false;
     surface->draw_dirty = false;
 }
 
@@ -540,8 +542,10 @@ void pgraph_vk_process_pending_downloads(NV2AState *d)
     SurfaceBinding *surface;
 
     QTAILQ_FOREACH(surface, &r->surfaces, entry) {
-        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_CPU,
+        PGRAPH_VK_DL_CAUSE(surface->download_nowait ? PGRAPH_VK_DL_CPU_NOWAIT
+                                                    : PGRAPH_VK_DL_CPU,
                            download_surface(d, surface, false));
+        surface->download_nowait = false;
     }
 
     qatomic_set(&r->downloads_pending, false);
@@ -670,6 +674,27 @@ void pgraph_vk_cpu_touch_format(char *buf, size_t size)
     qemu_mutex_unlock(&cpu_touch_lock);
 }
 
+/*
+ * XPSemu Chihiro: Xbox CPU reads of a depth surface do not wait for it.
+ * Maximum Tune 2 reads a few hundred depth values near the top of the 640x480
+ * depth buffer every frame (V322.xbe, around 0x00178ead) - the light and
+ * flare checks. Each read of a freshly rendered depth buffer made the Xbox
+ * CPU wait for the whole frame on the PS5 GPU and a full readback, up to
+ * 90 times a second (42-54 FPS in a race). The read now gets what guest RAM
+ * holds (the depth of the last readback, about a frame old) and the readback
+ * is only queued for the GPU thread. Color surfaces and every write still
+ * wait. XEMU_DEPTH_READ_LAG=0 (env.txt) waits as before.
+ */
+static bool depth_read_lag(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("XEMU_DEPTH_READ_LAG");
+        on = !(e && e[0] == '0');
+    }
+    return on;
+}
+
 static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
                                     hwaddr len, bool write)
 {
@@ -678,6 +703,7 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 
     PGRAPHVkState *r = d->pgraph.vk_renderer_state;
     bool wait_for_downloads = false;
+    bool queue_downloads = false;
 
     SurfaceBinding *surface;
     QTAILQ_FOREACH(surface, &r->surfaces, entry) {
@@ -700,8 +726,18 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
         }
 
         if (surface->draw_dirty) {
-            surface->download_pending = true;
-            wait_for_downloads = true;
+            if (!write && !surface->color && depth_read_lag()) {
+                /* queued once; reads meanwhile see the last readback */
+                if (!surface->download_pending) {
+                    surface->download_pending = true;
+                    surface->download_nowait = true;
+                    queue_downloads = true;
+                }
+            } else {
+                surface->download_pending = true;
+                surface->download_nowait = false;
+                wait_for_downloads = true;
+            }
         }
 
         if (write) {
@@ -710,6 +746,13 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
     }
 
     qemu_mutex_unlock(&d->pgraph.lock);
+
+    if (queue_downloads && !wait_for_downloads) {
+        qemu_mutex_lock(&d->pfifo.lock);
+        qatomic_set(&r->downloads_pending, true);
+        pfifo_kick(d);
+        qemu_mutex_unlock(&d->pfifo.lock);
+    }
 
     if (wait_for_downloads) {
         qemu_mutex_lock(&d->pfifo.lock);
