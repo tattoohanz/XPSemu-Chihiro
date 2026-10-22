@@ -562,6 +562,114 @@ void pgraph_vk_download_dirty_surfaces(NV2AState *d)
     qemu_event_set(&r->dirty_surfaces_download_complete);
 }
 
+/*
+ * XPSemu Chihiro: which rendered surfaces the Xbox CPU touches, for the game
+ * log (log only). Each window (5 s) lists the surfaces by downloads they
+ * caused: address, size, format, accesses, the byte range touched and the
+ * guest PC near the last access that downloaded (the PC of the code block,
+ * TCG keeps no exact one there).
+ */
+#define CPU_TOUCH_MAX 12
+static struct {
+    bool used, color, swizzle;
+    hwaddr addr, lo, hi;
+    unsigned int w, h, pitch, fmt;
+    uint64_t reads, writes;
+    uint32_t downloads;
+    vaddr pc;
+} cpu_touch[CPU_TOUCH_MAX];
+static QemuMutex cpu_touch_lock;
+static bool cpu_touch_init;
+
+static void cpu_touch_note(SurfaceBinding *s, hwaddr offset, hwaddr len,
+                           bool write, bool download)
+{
+    int slot = -1, free_slot = -1;
+    for (int i = 0; i < CPU_TOUCH_MAX; i++) {
+        if (!cpu_touch[i].used) {
+            if (free_slot < 0) {
+                free_slot = i;
+            }
+        } else if (cpu_touch[i].addr == s->vram_addr &&
+                   cpu_touch[i].w == s->width && cpu_touch[i].h == s->height &&
+                   cpu_touch[i].color == s->color) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        if (free_slot < 0) {
+            return;
+        }
+        slot = free_slot;
+        memset(&cpu_touch[slot], 0, sizeof(cpu_touch[slot]));
+        cpu_touch[slot].used = true;
+        cpu_touch[slot].addr = s->vram_addr;
+        cpu_touch[slot].w = s->width;
+        cpu_touch[slot].h = s->height;
+        cpu_touch[slot].pitch = s->pitch;
+        cpu_touch[slot].color = s->color;
+        cpu_touch[slot].swizzle = s->swizzle;
+        cpu_touch[slot].fmt =
+            s->color ? s->shape.color_format : s->shape.zeta_format;
+        cpu_touch[slot].lo = offset;
+        cpu_touch[slot].hi = offset + len;
+    }
+    if (write) {
+        cpu_touch[slot].writes++;
+    } else {
+        cpu_touch[slot].reads++;
+    }
+    cpu_touch[slot].lo = MIN(cpu_touch[slot].lo, offset);
+    cpu_touch[slot].hi = MAX(cpu_touch[slot].hi, offset + len);
+    if (download) {
+        cpu_touch[slot].downloads++;
+        if (current_cpu) {
+            cpu_touch[slot].pc = CPU_GET_CLASS(current_cpu)->get_pc(current_cpu);
+        }
+    }
+}
+
+/* The game log's "CPU touched" line (UI thread): the busiest surfaces since
+ * the last call, then forgotten. */
+void pgraph_vk_cpu_touch_format(char *buf, size_t size)
+{
+    buf[0] = 0;
+    if (!qatomic_read(&cpu_touch_init)) {
+        return;
+    }
+    qemu_mutex_lock(&cpu_touch_lock);
+    size_t len = 0;
+    for (int shown = 0; shown < 4; shown++) {
+        int best = -1;
+        for (int i = 0; i < CPU_TOUCH_MAX; i++) {
+            if (cpu_touch[i].used && cpu_touch[i].downloads &&
+                (best < 0 || cpu_touch[i].downloads > cpu_touch[best].downloads)) {
+                best = i;
+            }
+        }
+        if (best < 0 || len >= size) {
+            break;
+        }
+        len += snprintf(buf + len, size - len,
+                        "%s%08" PRIx64 " %ux%u %s fmt %u pitch %u%s: %u "
+                        "downloads, %" PRIu64 " reads %" PRIu64 " writes at "
+                        "+%" PRIx64 "..+%" PRIx64 ", pc %08" PRIx64,
+                        len ? "; " : "", (uint64_t)cpu_touch[best].addr,
+                        cpu_touch[best].w, cpu_touch[best].h,
+                        cpu_touch[best].color ? "color" : "zeta",
+                        cpu_touch[best].fmt, cpu_touch[best].pitch,
+                        cpu_touch[best].swizzle ? " swizzled" : "",
+                        cpu_touch[best].downloads, cpu_touch[best].reads,
+                        cpu_touch[best].writes, (uint64_t)cpu_touch[best].lo,
+                        (uint64_t)cpu_touch[best].hi,
+                        (uint64_t)cpu_touch[best].pc);
+        cpu_touch[best].downloads = 0;
+    }
+    memset(cpu_touch, 0, sizeof(cpu_touch));
+    qemu_mutex_unlock(&cpu_touch_lock);
+}
+
 static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
                                     hwaddr len, bool write)
 {
@@ -583,6 +691,12 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
             trace_nv2a_pgraph_surface_cpu_write(surface->vram_addr, offset);
         } else {
             trace_nv2a_pgraph_surface_cpu_read(surface->vram_addr, offset);
+        }
+
+        if (qatomic_read(&cpu_touch_init)) {
+            qemu_mutex_lock(&cpu_touch_lock);
+            cpu_touch_note(surface, offset, len, write, surface->draw_dirty);
+            qemu_mutex_unlock(&cpu_touch_lock);
         }
 
         if (surface->draw_dirty) {
@@ -609,6 +723,10 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 
 static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface)
 {
+    if (!cpu_touch_init) {
+        qemu_mutex_init(&cpu_touch_lock);
+        qatomic_set(&cpu_touch_init, true);
+    }
     if (tcg_enabled()) {
         if (surface->width && surface->height) {
             surface->access_cb = mem_access_callback_insert(

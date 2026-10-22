@@ -547,6 +547,10 @@ enum {
     PGRAPH_VK_DL__COUNT
 };
 extern int pgraph_vk_dl_cause;
+/* The game log's lines (ui/xui/game-log.cc): downloads by cause, and the
+ * rendered surfaces the Xbox CPU touched, since the last call. */
+void pgraph_vk_dl_causes_format(char *buf, size_t size);
+void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 #define PGRAPH_VK_DL_CAUSE(c, stmt)              \
     do {                                         \
         int dl_saved_ = pgraph_vk_dl_cause;      \
