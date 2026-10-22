@@ -23,6 +23,7 @@
 #include "qemu/timer.h"
 #include "xemu-input.h"
 #include "xemu-notifications.h"
+#include "xemu-os-utils.h"
 #include "xemu-settings.h"
 
 int sceUserServiceInitialize(const void *params);
@@ -403,6 +404,83 @@ uint32_t xemu_ps5_pad_ui_buttons(void)
 void xemu_input_update_ps5_pad_rumble(ControllerState *state)
 {
     (void)state;
+}
+
+/*
+ * XPSemu Chihiro: the DualSense's two motors for a Chihiro cabinet's drive
+ * board (xemu-input-chihiro.c). The pad is put in compatible vibration mode
+ * (2) once per handle, as PS5_RetroArch does; a level is sent when it
+ * changes, and again every second while it is on. While the dashboard is
+ * up the motors stop.
+ */
+typedef struct PadVibration {
+    uint8_t large_motor, small_motor;
+} PadVibration;
+int scePadSetVibration(int32_t handle, const PadVibration *param);
+int scePadSetVibrationMode(int32_t handle, int32_t mode);
+
+static struct {
+    int32_t mode_handle;      /* the handle its mode was set on, -1 none */
+    PadVibration last;
+    int64_t last_ms;
+    int sends, failures, last_rc;
+    uint8_t peak;
+} g_vib = { -1, { 0, 0 }, 0, 0, 0, 0, 0 };
+
+void xemu_ps5_pad_vibrate(int player, uint8_t large, uint8_t small)
+{
+    if (player < 0 || player >= PS5_PLAYERS || g_players[player].handle < 0 ||
+        !xemu_ps5_import_ok("scePadSetVibration") ||
+        !xemu_ps5_import_ok("scePadSetVibrationMode")) {
+        return;
+    }
+    int32_t handle = g_players[player].handle;
+    if (g_xemu_ps5_pad_hold) {
+        large = small = 0;
+    }
+    if (g_vib.mode_handle != handle) {
+        int rc = scePadSetVibrationMode(handle, 2);
+        g_vib.mode_handle = handle;
+        g_vib.last.large_motor = g_vib.last.small_motor = 0;
+        g_vib.last_ms = 0;
+        fprintf(stderr, "xemu PS5 pad: vibration mode 2 on handle %d: %#x\n",
+                handle, rc);
+    }
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    bool changed = large != g_vib.last.large_motor ||
+                   small != g_vib.last.small_motor;
+    bool refresh = (large || small) && now - g_vib.last_ms >= 1000;
+    if (!changed && !refresh) {
+        return;
+    }
+    PadVibration v = { large, small };
+    int rc = scePadSetVibration(handle, &v);
+    g_vib.last = v;
+    g_vib.last_ms = now;
+    g_vib.sends++;
+    g_vib.peak = MAX(g_vib.peak, MAX(large, small));
+    if (rc != 0) {
+        g_vib.failures++;
+        g_vib.last_rc = rc;
+    }
+}
+
+/* The game log's line: sends since the last call, the strongest level, the
+ * failures and the last error; "" when nothing was sent. */
+void xemu_ps5_pad_vibration_format(char *buf, size_t size)
+{
+    buf[0] = '\0';
+    if (!g_vib.sends) {
+        return;
+    }
+    int n = snprintf(buf, size, "%d sends, strongest %d%%", g_vib.sends,
+                     g_vib.peak * 100 / 255);
+    if (g_vib.failures && n > 0 && (size_t)n < size) {
+        snprintf(buf + n, size - n, ", %d failed (last %#x)", g_vib.failures,
+                 g_vib.last_rc);
+    }
+    g_vib.sends = g_vib.failures = 0;
+    g_vib.peak = 0;
 }
 
 void xemu_input_update_ps5_pad_state(ControllerState *state)

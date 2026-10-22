@@ -33,6 +33,9 @@
 #include "hw/xbox/chihiro/chihiro.h"
 #include "hw/xbox/chihiro/chihiro-jvs.h"
 #include "hw/xbox/chihiro/chihiro-driveboard-v257.h"
+#include "hw/xbox/chihiro/chihiro-driveboard-sega838.h"
+#include "hw/xbox/chihiro/chihiro-cabinet.h"
+#include "qemu/timer.h"
 
 /* Stick travel below this is the stick resting (DualSense drift). */
 #define STEER_DEADZONE 0.08f
@@ -95,6 +98,82 @@ static uint8_t wmmt_lever(const ControllerState *pad)
         gear--;
     }
     return wmmt_gate[gear];
+}
+
+/*
+ * XPSemu Chihiro: the drive board's force feedback as DualSense rumble, as
+ * the desktop fork gives it a plain gamepad (ui/xemu-input.c there,
+ * chihiro_ffb_update). A pad has no wheel to turn, so it feels the knocks
+ * and textures, not the centring and the weight:
+ *   OutRun 2 (Sega 838): the effect packages the game plays (impacts,
+ *     sand, grass) and its explicit vibration, driveboard_get_rumble();
+ *     driveboard_get_ffb() is the packages' clock, once per UI frame.
+ *   Maximum Tune (V257): the board's push; a collision's push begins as a
+ *     knock, full force for 80 ms.
+ * Both motors get the same level. XEMU_CHIHIRO_FFB in env.txt is the
+ * strength in percent (100 = as the desktop fork, 0 = off, up to 200).
+ */
+#define V257_KNOCK_MS  80
+#define V257_KNOCK_MIN 96
+
+static int ffb_strength(void)
+{
+    static int str = -1;
+    if (str < 0) {
+        const char *e = getenv("XEMU_CHIHIRO_FFB");
+        str = e && *e ? atoi(e) : 100;
+        str = str < 0 ? 0 : str > 200 ? 200 : str;
+    }
+    return str;
+}
+
+/* 0-0xFFFF, before the strength */
+static uint32_t ffb_level(void)
+{
+    switch (chihiro_cabinet_drive_board()) {
+    case CHIHIRO_DRIVE_SEGA838: {
+        if (!chihiro_driveboard_global) {
+            return 0;
+        }
+        DriveBoardFFB ffb;
+        driveboard_get_ffb(chihiro_driveboard_global, &ffb);
+        return driveboard_get_rumble(chihiro_driveboard_global);
+    }
+    case CHIHIRO_DRIVE_V257: {
+        static int prev, knock_push;
+        static int64_t knock_until;
+        int target, spring, damping, torque;
+        if (!chihiro_v257_global) {
+            return 0;
+        }
+        v257_drive(chihiro_v257_global, &target, &spring, &damping, &torque);
+        int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+        if (abs(torque) >= V257_KNOCK_MIN &&
+            (!prev || (torque > 0) != (prev > 0))) {
+            knock_push = torque > 0 ? 0x7F : -0x7F;
+            knock_until = now + V257_KNOCK_MS;
+        }
+        prev = torque;
+        if (now < knock_until) {
+            torque = knock_push;
+        }
+        return (uint32_t)abs(torque) * 0xFFFF / 0x7F;
+    }
+    default:
+        return 0;
+    }
+}
+
+static void chihiro_ffb_rumble(void)
+{
+    int str = ffb_strength();
+    uint32_t level = str ? ffb_level() * (uint32_t)str / 100 : 0;
+    uint8_t motor = level >= 0xFFFF ? 255 : (uint8_t)(level >> 8);
+#ifdef __PROSPERO__
+    xemu_ps5_pad_vibrate(0, motor, motor);
+#else
+    (void)motor;
+#endif
 }
 
 void xemu_input_update_chihiro_jvs(void)
@@ -222,4 +301,6 @@ void xemu_input_update_chihiro_jvs(void)
              &coin_was)) {
         jvs->coin_count[0]++;
     }
+
+    chihiro_ffb_rumble();
 }

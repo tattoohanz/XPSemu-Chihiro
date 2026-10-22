@@ -45,6 +45,7 @@ extern "C" void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 extern "C" void pgraph_vk_reshape_format(char *buf, size_t size);
 extern "C" void pgraph_vk_diag_blit_format(char *buf, size_t size);
 extern "C" void pgraph_vk_diag_tex_format(char *buf, size_t size);
+extern "C" void xemu_ps5_pad_vibration_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -254,7 +255,9 @@ void GameLogStart(const GameLogInfo &info)
          "refused the old one); the image blits (source -> destination, size, "
          "position, format, pitch, done on the GPU or why on the CPU) and "
          "the textures read from rendered "
-         "memory (why the surface there could not serve)\n"
+         "memory (why the surface there could not serve); the drive board's "
+         "force feedback on the DualSense (motor sends, strongest level, "
+         "failures)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -487,6 +490,11 @@ void GameLogTick()
     if (diag[0]) {
         Write(std::string("           textures from rendered memory: ") +
               diag + "\n");
+    }
+    /* XPSemu Chihiro: the drive board's force feedback on the DualSense */
+    xemu_ps5_pad_vibration_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           force feedback: ") + diag + "\n");
     }
 
     // The stopwatches (hw/xbox/xemu-timing.h): ms per second, and times.
