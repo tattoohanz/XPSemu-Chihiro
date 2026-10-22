@@ -1,3 +1,87 @@
+# XPSemu Chihiro (unofficial fork)
+
+> **Unofficial fork** of [ZiZc3/XPSemu](https://github.com/ZiZc3/XPSemu), maintained by
+> [tattoohanz](https://github.com/tattoohanz). Not affiliated with or endorsed by ZiZc3, the xemu
+> project, Sega, Microsoft or Sony. Please report problems with this fork here, not to XPSemu.
+
+XPSemu Chihiro adds the **Sega Chihiro** arcade machine to XPSemu: Chihiro netboot images such as
+Wangan Midnight Maximum Tune 1 and 2, OutRun 2 and Ollie King run next to Xbox games. It is a
+separate title, **`PPSA97372`**, with its own data folder **`/data/xemu-chihiro/`**, so an installed
+XPSemu (`PPSA97358`, `/data/xemu/`) is not touched.
+
+Played on a PS5 so far: Wangan Midnight Maximum Tune 2 export (with the Gemballa patches),
+OutRun 2 and Ollie King. Some scenes still run below 60 FPS.
+
+### What this fork adds to XPSemu
+
+- **The Chihiro machine**: media board (ASIC / V850, DIMM, flash), the AN2131 QC/SC USB boards,
+  JVS I/O, the Sega 838 and V257 drive boards, card readers and the network board. Ported from
+  [tattoohanz/xemu](https://github.com/tattoohanz/xemu) (branch `widescreen`), which builds on
+  [Tovarichtch's xemu Chihiro fork](https://github.com/Tovarichtch/xemu) (Playtest-v2).
+- **Maximum Tune 1/2 export patches**: the Gemballa maker and Blackbird's Gemballa, applied in
+  memory (switches below).
+- **16:9 for the Chihiro games**, with the HUD moved out to the screen edges and the menus kept 4:3.
+- **PS5 speed-ups**: the APU hands its lock to the Xbox CPU between DSP chunks (DSP on keeps real
+  time), rendered cubemaps and plain image blits are copied on the GPU instead of through RAM, Xbox CPU
+  reads of a depth buffer take the last readback, a larger depth buffer serves a smaller color
+  target.
+- **Cabinet controls on the DualSense** (coin on D-pad up), see
+  [`ps5/README-CHIHIRO.md`](ps5/README-CHIHIRO.md).
+
+### Install
+
+1. Copy `PPSA97372/` from the release to `/data/homebrew/` (ShadowMountPlus installs it).
+2. Add the line `PPSA97372` to `/data/whitelist.txt` and load `helper.elf` with kstuff, as for
+   XPSemu.
+3. Copy **your own** Chihiro dumps into `/data/xemu-chihiro/chihiro/`: `chihiro_xbox_bios.bin`,
+   `fpr21042_m29w160et.bin`, `ic10_g24lc64.bin`, `pc20_g24lc64.bin`, `ic11_24lc024.bin`.
+4. Copy your netboot images (`.bin`) into `/data/xemu-chihiro/games/` (or `xemu/games/` on a USB
+   drive), start XPSemu Chihiro and pick the game.
+
+Xbox games work as in XPSemu, with the MCPX ROM and BIOS in `/data/xemu-chihiro/`.
+
+### Switches: `/data/xemu-chihiro/env.txt`
+
+Written with every switch and a comment the first time the app starts; one `NAME=VALUE` per line,
+read at startup.
+
+| Switch | Default | What it does |
+|---|---|---|
+| `XEMU_WM1_*`, `XEMU_WM2_*` | 1 | Maximum Tune 1/2 export Gemballa patches (only on the export `V307.xbe` / `V322.xbe`). |
+| `XEMU_WS_HACK` | 0 | 16:9 for the Chihiro games; set the game's screen shape to 16:9 too. |
+| `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`, `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` | 1, 1, 26, 1, 0 | With `XEMU_WS_HACK=1`: the copy-pass fix, the HUD at the 16:9 edges, 4:3 menus, the menu background. |
+| `XEMU_DEPTH_READ_LAG` | 1 | Xbox CPU reads of a depth buffer take the last readback instead of waiting for the GPU. |
+| `XEMU_ZETA_REUSE_LARGER` | 1 | A larger depth buffer serves a smaller color target as it is. |
+| `XEMU_CUBE_FROM_SURFACES` | 1 | A cubemap whose six faces the game renders is copied on the GPU. |
+| `XEMU_GPU_BLIT` | 1 | A plain copy between two rendered color buffers is done on the GPU. |
+| `XEMU_CHIHIRO_LOG` | (off) | Chihiro log categories in `xemu.log`: `boot,jvs,card,ffb,mbcom,usb,net`. |
+
+`0` turns a speed-up off (as XPSemu does it) if a game shows a problem with it.
+
+### Building
+
+As for XPSemu (below); `ps5/build-title.sh` makes `dist/PPSA97372/`. Ship `imports.txt` with
+`eboot.bin`: it belongs to that exact build.
+
+### Credits for this fork
+
+- **[ZiZc3](https://github.com/ZiZc3)** for [XPSemu](https://github.com/ZiZc3/XPSemu), which this
+  fork builds on, and everyone in XPSemu's credits below.
+- **[Tovarichtch](https://github.com/Tovarichtch)** for the xemu Chihiro fork (Playtest-v2); the
+  Chihiro sources carry Réda Chérif-Touil's copyright.
+- **[MAME](https://github.com/mamedev/mame)**: the media board DES routines from `naomigd.cpp`
+  (Olivier Galibert, BSD-3-Clause, [`licenses/mame-naomigd.license.txt`](licenses/mame-naomigd.license.txt)).
+
+### License
+
+GPL-2.0, like XPSemu, xemu and QEMU; files under other compatible licenses say so in their headers.
+This fork **does not include** any Sega or Microsoft content: no Chihiro or Xbox BIOS, media board
+firmware, EEPROM, dashboard or game. Use your own dumps.
+
+---
+
+## The original XPSemu README
+
 <p align="center">
   <img src="ps5/art/readme-banner.png" alt="XPSemu" width="100%">
 </p>
