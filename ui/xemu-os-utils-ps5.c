@@ -840,6 +840,31 @@ static const char kEnvTemplate[] =
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 
+/*
+ * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set
+ * here answers from this table, anything else from the system's getenv, so
+ * the Chihiro code's getenv("XEMU_WM2_GEMBALLA") works as on the desktop
+ * without relying on the console's setenv.
+ */
+#define ENV_MAX 64
+static struct {
+    char name[64];
+    char value[256];
+} env_table[ENV_MAX];
+static int env_count;
+
+char *__real_getenv(const char *name);
+char *__wrap_getenv(const char *name);
+char *__wrap_getenv(const char *name)
+{
+    for (int i = 0; name && i < env_count; i++) {
+        if (!strcmp(env_table[i].name, name)) {
+            return env_table[i].value;
+        }
+    }
+    return __real_getenv(name);
+}
+
 void xemu_ps5_chihiro_prepare(void)
 {
     mkdir(XEMU_PS5_DATA_DIR, 0777);
@@ -862,7 +887,6 @@ void xemu_ps5_chihiro_prepare(void)
         fprintf(stderr, "XPSemu Chihiro: no %s (%d)\n", XEMU_PS5_ENV_FILE, errno);
         return;
     }
-    bool can_set = xemu_ps5_import_ok("setenv");
     char line[512];
     while (fgets(line, sizeof(line), f)) {
         char *p = line;
@@ -887,12 +911,21 @@ void xemu_ps5_chihiro_prepare(void)
         while (*value == ' ' || *value == '\t') {
             value++;
         }
-        if (!can_set) {
-            fprintf(stderr, "XPSemu Chihiro: env %s=%s ignored (no setenv)\n",
-                    name, value);
+        int slot = 0;
+        while (slot < env_count && strcmp(env_table[slot].name, name) != 0) {
+            slot++;
+        }
+        if (slot == ENV_MAX) {
+            fprintf(stderr, "XPSemu Chihiro: env %s ignored (more than %d)\n",
+                    name, ENV_MAX);
             continue;
         }
-        setenv(name, value, 1);
+        snprintf(env_table[slot].name, sizeof(env_table[slot].name), "%s", name);
+        snprintf(env_table[slot].value, sizeof(env_table[slot].value), "%s",
+                 value);
+        if (slot == env_count) {
+            env_count++;
+        }
         fprintf(stderr, "XPSemu Chihiro: env %s=%s\n", name, value);
     }
     fclose(f);

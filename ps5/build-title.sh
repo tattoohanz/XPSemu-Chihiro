@@ -101,6 +101,8 @@ radv_link_recipe "$vk" "$sdk_root" "$archive" || exit 2
 radv_link_flags+=(--wrap=mmap --wrap=munmap)
 # The real IDs for the effective ones (Mesa's disk cache, ps5/compat/libc_stubs.c).
 radv_link_flags+=(--wrap=geteuid --wrap=getegid)
+# XPSemu Chihiro: env.txt's switches answer getenv (ui/xemu-os-utils-ps5.c).
+radv_link_flags+=(--wrap=getenv)
 # QEMU's coroutines start without the ucontext system calls (ps5/compat/ucontext.c).
 radv_link_flags+=(--wrap=getcontext --wrap=makecontext --wrap=swapcontext)
 # libc functions the console leaves unresolved for a title (its GOT slot stays
