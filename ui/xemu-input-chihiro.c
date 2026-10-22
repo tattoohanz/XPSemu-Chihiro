@@ -13,8 +13,9 @@
  *     Triangle (Y)     view change     Square (X) Maximum Tune's 2nd button
  *     Circle (B)       card in (Maximum Tune)
  *   Every game
- *     Options (Start) or Cross (A)  START      Create (Back)  COIN
+ *     Options (Start) or Cross (A)  START      D-pad up  COIN
  *     D-pad right      TEST            D-pad left SERVICE
+ *   (Create also gives a coin, but on the PS5 it opens the capture menu.)
  *
  * Maximum Tune's shifter is an H gate; the paddles move its lever one gear
  * at a time and leave it there, as the desktop fork does (wmmt_lever).
@@ -216,7 +217,9 @@ void xemu_input_update_chihiro_jvs(void)
         pressed(pad, CONTROLLER_BUTTON_DPAD_RIGHT) ? 0x80 : 0x00;
 
     static bool coin_was;
-    if (edge(pressed(pad, CONTROLLER_BUTTON_BACK), &coin_was)) {
+    if (edge(pressed(pad, CONTROLLER_BUTTON_DPAD_UP) ||
+                 pressed(pad, CONTROLLER_BUTTON_BACK),
+             &coin_was)) {
         jvs->coin_count[0]++;
     }
 }
