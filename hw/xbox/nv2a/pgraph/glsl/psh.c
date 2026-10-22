@@ -30,6 +30,7 @@
 #include "hw/xbox/nv2a/debug.h"
 #include "hw/xbox/nv2a/pgraph/pgraph.h"
 #include "psh.h"
+#include "hw/xbox/nv2a/pgraph/hud_diag.h"
 
 DEF_UNIFORM_INFO_ARR(PshUniform, PSH_UNIFORM_DECL_X)
 
@@ -1802,4 +1803,7 @@ void pgraph_glsl_set_psh_uniform_values(PGRAPHState *pg,
         values->clipRegion[i][2] = x_max;
         values->clipRegion[i][3] = y_max;
     }
+    /* XPSemu Chihiro: the widescreen hack's 4:3 clip (hud_diag.c). */
+    pgraph_hud_ws_clip_regions(pg, values->clipRegion, max_gl_width,
+                               max_gl_height);
 }

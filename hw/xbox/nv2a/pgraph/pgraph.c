@@ -22,6 +22,7 @@
 #include <math.h>
 
 #include "hw/xbox/nv2a/nv2a_int.h"
+#include "hud_diag.h"
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-settings.h"
 #include "util.h"
@@ -920,6 +921,7 @@ DEF_METHOD(NV097, FLIP_INCREMENT_WRITE)
 DEF_METHOD(NV097, FLIP_STALL)
 {
     trace_nv2a_pgraph_flip_stall();
+    pgraph_hud_diag_flip(d); /* XPSemu Chihiro: widescreen passes (hud_diag.c) */
     d->pgraph.renderer->ops.surface_update(d, false, true, true);
     d->pgraph.renderer->ops.flip_stall(d);
     nv2a_profile_flip_stall();
@@ -2524,6 +2526,7 @@ DEF_METHOD(NV097, SET_BEGIN_END)
             return;
         }
         nv2a_profile_inc_counter(NV2A_PROF_BEGIN_ENDS);
+        pgraph_hud_diag_draw(d);
         d->pgraph.renderer->ops.draw_end(d);
         pgraph_reset_inline_buffers(pg);
         pg->primitive_mode = PRIM_TYPE_INVALID;
@@ -2684,6 +2687,7 @@ static void pgraph_expand_draw_arrays(NV2AState *d)
      * triggered if a set of BEGIN+DA+END triplets is followed by the
      * BEGIN+DA+ARRAY_ELEMENT+... chain that caused this expansion. */
     if (pg->draw_arrays_length > 1) {
+        pgraph_hud_diag_draw(d);
         d->pgraph.renderer->ops.flush_draw(d);
         pgraph_reset_inline_buffers(pg);
     }
@@ -2937,7 +2941,9 @@ DEF_METHOD(NV097, SET_COLOR_CLEAR_VALUE)
 
 DEF_METHOD(NV097, CLEAR_SURFACE)
 {
-    d->pgraph.renderer->ops.clear_surface(d, parameter);
+    if (!pgraph_hud_ws_clear(d, parameter)) {
+        d->pgraph.renderer->ops.clear_surface(d, parameter);
+    }
 }
 
 DEF_METHOD(NV097, SET_CLEAR_RECT_HORIZONTAL)
