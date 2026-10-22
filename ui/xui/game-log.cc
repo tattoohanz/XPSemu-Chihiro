@@ -41,6 +41,7 @@ extern "C" int sceKernelAvailableFlexibleMemorySize(size_t *available);
 extern "C" int xemu_ps5_threads_made;
 // XPSemu Chihiro: surface downloads by cause (hw/xbox/nv2a/pgraph/vk/surface.c)
 extern "C" void pgraph_vk_dl_causes_format(char *buf, size_t size);
+extern "C" void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -243,7 +244,9 @@ void GameLogStart(const GameLogInfo &info)
          "  (XPSemu Chihiro) and when surfaces were copied back: downloads "
          "by cause - the Xbox CPU touching one, an image blit reading or "
          "partly writing one, a texture or vertices in its memory, a new "
-         "surface overlapping it, sync\n"
+         "surface overlapping it, sync; and the rendered surfaces the "
+         "Xbox CPU touched (address, size, format, downloads, accesses, "
+         "bytes touched, the guest PC near it)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -456,6 +459,11 @@ void GameLogTick()
         snprintf(buf, sizeof(buf), "           downloads by cause: %s\n",
                  causes);
         Write(buf);
+    }
+    char touched[640];
+    pgraph_vk_cpu_touch_format(touched, sizeof(touched));
+    if (touched[0]) {
+        Write(std::string("           CPU touched: ") + touched + "\n");
     }
 
     // The stopwatches (hw/xbox/xemu-timing.h): ms per second, and times.
