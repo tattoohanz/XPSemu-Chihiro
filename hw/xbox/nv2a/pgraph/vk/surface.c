@@ -472,6 +472,28 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
     }
 }
 
+int pgraph_vk_dl_cause = PGRAPH_VK_DL_OTHER;
+static uint32_t pgraph_vk_dl_count[PGRAPH_VK_DL__COUNT];
+
+/* The game log's "downloads by cause" line: the counts since the last call
+ * (UI thread). Empty when there were none. */
+void pgraph_vk_dl_causes_format(char *buf, size_t size)
+{
+    static const char *const names[PGRAPH_VK_DL__COUNT] = {
+        "other", "CPU", "sync", "blit source", "blit destination", "texture",
+        "vertices", "overlap", "other shape", "old", "flush",
+    };
+    size_t len = 0;
+    buf[0] = 0;
+    for (int i = 0; i < PGRAPH_VK_DL__COUNT && len < size; i++) {
+        uint32_t n = qatomic_xchg(&pgraph_vk_dl_count[i], 0);
+        if (n) {
+            len += snprintf(buf + len, size - len, "%s%s %u",
+                            len ? ", " : "", names[i], n);
+        }
+    }
+}
+
 static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
 {
     if (!(surface->download_pending || force) || !surface->width ||
@@ -484,6 +506,7 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
     uint64_t xt_download = xemu_timing_now();
     download_surface_to_buffer(d, surface, d->vram_ptr + surface->vram_addr);
     xemu_timing_add(XT_DOWNLOAD, xt_download);
+    qatomic_inc(&pgraph_vk_dl_count[pgraph_vk_dl_cause]);
 
     memory_region_set_client_dirty(d->vram, surface->vram_addr,
                                    surface->pitch * surface->height,
@@ -517,7 +540,8 @@ void pgraph_vk_process_pending_downloads(NV2AState *d)
     SurfaceBinding *surface;
 
     QTAILQ_FOREACH(surface, &r->surfaces, entry) {
-        download_surface(d, surface, false);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_CPU,
+                           download_surface(d, surface, false));
     }
 
     qatomic_set(&r->downloads_pending, false);
@@ -530,7 +554,8 @@ void pgraph_vk_download_dirty_surfaces(NV2AState *d)
 
     SurfaceBinding *surface;
     QTAILQ_FOREACH(surface, &r->surfaces, entry) {
-        pgraph_vk_surface_download_if_dirty(d, surface);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_SYNC,
+                           pgraph_vk_surface_download_if_dirty(d, surface));
     }
 
     qatomic_set(&r->download_dirty_surfaces_pending, false);
@@ -679,7 +704,9 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
             trace_nv2a_pgraph_surface_evict_overlapping(
                 other_surface->vram_addr, other_surface->width,
                 other_surface->height, other_surface->pitch);
-            pgraph_vk_surface_download_if_dirty(d, other_surface);
+            PGRAPH_VK_DL_CAUSE(
+                PGRAPH_VK_DL_OVERLAP,
+                pgraph_vk_surface_download_if_dirty(d, other_surface));
             invalidate_surface(d, other_surface);
         }
     }
@@ -915,7 +942,8 @@ static void expire_old_surfaces(NV2AState *d)
         int last_used = d->pgraph.frame_time - s->frame_time;
         if (last_used >= max_surface_frame_time_delta) {
             trace_nv2a_pgraph_surface_evict_reason("old", s->vram_addr);
-            pgraph_vk_surface_download_if_dirty(d, s);
+            PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_OLD,
+                               pgraph_vk_surface_download_if_dirty(d, s));
             invalidate_surface(d, s);
         }
     }
@@ -1515,7 +1543,9 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
-                pgraph_vk_surface_download_if_dirty(d, surface);
+                PGRAPH_VK_DL_CAUSE(
+                    PGRAPH_VK_DL_INCOMPAT,
+                    pgraph_vk_surface_download_if_dirty(d, surface));
                 invalidate_surface(d, surface);
             }
         }
@@ -1754,7 +1784,8 @@ void pgraph_vk_surface_flush(NV2AState *d)
     QTAILQ_FOREACH_SAFE(s, &r->surfaces, entry, next) {
         // FIXME: We should download all surfaces to ram, but need to
         //        investigate corruption issue
-        pgraph_vk_surface_download_if_dirty(d, s);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_FLUSH,
+                           pgraph_vk_surface_download_if_dirty(d, s));
         invalidate_surface(d, s);
     }
     prune_invalid_surfaces(r, 0);

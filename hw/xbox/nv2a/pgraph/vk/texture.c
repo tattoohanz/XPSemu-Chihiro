@@ -1140,8 +1140,9 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         // FIXME: Restructure to support rendering surfaces to cubemap faces
 
         // Writeback any surfaces which this texture may index
-        pgraph_vk_download_surfaces_in_range_if_dirty(
-            pg, texture_vram_offset, texture_length);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_TEXTURE,
+                           pgraph_vk_download_surfaces_in_range_if_dirty(
+                               pg, texture_vram_offset, texture_length));
     }
 
     if (surface_to_texture && pg->surface_scale_factor > 1) {
