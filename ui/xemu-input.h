@@ -163,6 +163,10 @@ const char *xemu_ps5_source_name(int source);
 int xemu_ps5_pad_pressed_source(void);  // -1: none
 uint32_t xemu_ps5_pad_ui_buttons(void); // The dashboard's (standard layout)
 void xemu_input_update_ps5_pad_rumble(ControllerState *state);
+// XPSemu Chihiro: the drive board's force feedback on a player's DualSense
+// motors (0-255 each), and the game log's line about it.
+void xemu_ps5_pad_vibrate(int player, uint8_t large, uint8_t small);
+void xemu_ps5_pad_vibration_format(char *buf, size_t size);
 #endif
 ControllerState *xemu_input_get_bound(int index);
 void xemu_input_bind(int index, ControllerState *state, int save);

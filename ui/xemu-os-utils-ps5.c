@@ -861,6 +861,11 @@ static const char kEnvTemplate[] =
     "# (OutRun 2's effect buffers; 0 = every image blit on the CPU as before)\n"
     "XEMU_GPU_BLIT=1\n"
     "#\n"
+    "# The drive board's force feedback as DualSense rumble (OutRun 2's\n"
+    "# impacts and surfaces, Maximum Tune's knocks): strength in percent,\n"
+    "# 100 = as the desktop build, 0 = off, up to 200\n"
+    "XEMU_CHIHIRO_FFB=100\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 

@@ -25,7 +25,8 @@ OutRun 2 and Ollie King. Some scenes still run below 60 FPS.
   time), rendered cubemaps and plain image blits are copied on the GPU instead of through RAM, Xbox CPU
   reads of a depth buffer take the last readback, a larger depth buffer serves a smaller color
   target.
-- **Cabinet controls on the DualSense** (coin on D-pad up), see
+- **Cabinet controls on the DualSense** (coin on D-pad up) and the drive board's force feedback
+  as rumble, see
   [`ps5/README-CHIHIRO.md`](ps5/README-CHIHIRO.md).
 
 ### Install
@@ -54,6 +55,7 @@ read at startup.
 | `XEMU_ZETA_REUSE_LARGER` | 1 | A larger depth buffer serves a smaller color target as it is. |
 | `XEMU_CUBE_FROM_SURFACES` | 1 | A cubemap whose six faces the game renders is copied on the GPU. |
 | `XEMU_GPU_BLIT` | 1 | A plain copy between two rendered color buffers is done on the GPU. |
+| `XEMU_CHIHIRO_FFB` | 100 | The drive board's force feedback as DualSense rumble (OutRun 2's impacts and surfaces, Maximum Tune's knocks), in percent; 0 = off, up to 200. |
 | `XEMU_CHIHIRO_LOG` | (off) | Chihiro log categories in `xemu.log`: `boot,jvs,card,ffb,mbcom,usb,net`. |
 
 `0` turns a speed-up off (as XPSemu does it) if a game shows a problem with it.

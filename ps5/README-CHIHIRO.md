@@ -33,6 +33,8 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
 - `XEMU_DEPTH_READ_LAG`, `XEMU_ZETA_REUSE_LARGER`, `XEMU_CUBE_FROM_SURFACES`,
   `XEMU_GPU_BLIT`: PS5 speed-ups, on by default; 0 does it as XPSemu does.
+- `XEMU_CHIHIRO_FFB=100`: the drive board's force feedback as DualSense
+  rumble, in percent (0 = off, up to 200).
 - `XEMU_CHIHIRO_LOG=boot,jvs,card,...`: Chihiro log categories in xemu.log.
 
 ## Controls (Chihiro)
