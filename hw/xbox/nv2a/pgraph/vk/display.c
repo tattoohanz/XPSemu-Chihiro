@@ -1144,6 +1144,18 @@ void pgraph_vk_render_display(PGRAPHState *pg)
         height *= 2;
     }
 
+    /* XPSemu Chihiro (from the desktop fork): clamp the display to the
+     * surface when the CRTC area exceeds the framebuffer (a Chihiro's PAL
+     * 720x576 CRTC with a 640x480 render target). On real hardware the TV
+     * encoder fills the overscan with black; xemu has no TV encoder, so the
+     * picture matches the surface (else its bottom repeats its top). */
+    if (width > surface->width) {
+        width = surface->width;
+    }
+    if (height > surface->height) {
+        height = surface->height;
+    }
+
     pgraph_apply_scaling_factor(pg, &width, &height);
 
     PGRAPHVkDisplayState *disp = &r->display;
