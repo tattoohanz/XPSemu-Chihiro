@@ -66,12 +66,15 @@ const char *xemu_ps5_own_title_id(void);
 // settings are loaded, before anything reads them.
 void xemu_ps5_chihiro_prepare(void);
 // The Chihiro image to boot this time (free it), or NULL for the Xbox:
-// a home-screen shortcut's image, or the one the dashboard asked for
-// before restarting the app (XEMU_PS5_CHIHIRO_BOOT_FILE, taken once).
+// the one the dashboard asked for before restarting the app
+// (XEMU_PS5_CHIHIRO_BOOT_FILE, taken once), else a home-screen shortcut's.
 char *xemu_ps5_chihiro_boot_image(void);
 // An Xbox game the dashboard asked for before restarting the app (the
 // Xbox boots, the dashboard launches it), else "".
 const char *xemu_ps5_xbox_autolaunch(void);
+// The dashboard restarted the app with a request (a game, or none): a
+// home-screen shortcut's own game then waits.
+bool xemu_ps5_boot_requested(void);
 #endif
 
 #ifdef CONFIG_CPUID_H

@@ -1622,14 +1622,16 @@ void DashboardScene::Show()
     // The music fades in: at startup once the startup sound is under way
     // (loaded now, in the startup stall), else straight away.
     if (m_startup_fade) {
-        m_autolaunch = ShortcutGame();
-        // XPSemu Chihiro: the Chihiro this start was made for, or the Xbox
-        // game the dashboard asked for while a Chihiro ran.
-        if (m_autolaunch.empty() && xemu_chihiro_mode()) {
+        // XPSemu Chihiro: the Chihiro this start was made for, the Xbox game
+        // the dashboard asked for while a Chihiro ran, nothing when it
+        // asked for itself, else (a shortcut) the shortcut's game.
+        std::string shortcut = ShortcutGame();
+        if (xemu_chihiro_mode()) {
             m_autolaunch = xemu_chihiro_image();
-        }
-        if (m_autolaunch.empty()) {
+        } else if (xemu_ps5_boot_requested()) {
             m_autolaunch = xemu_ps5_xbox_autolaunch();
+        } else {
+            m_autolaunch = shortcut;
         }
         RemoveOldShortcuts();
         UiMusicPrepare();
@@ -2606,8 +2608,10 @@ float DashboardScene::BurnAt(double when) const
 
 void DashboardScene::StopGameNow(const char *why)
 {
-    // XPSemu Chihiro: a Chihiro stops by starting again as the Xbox.
+    // XPSemu Chihiro: a Chihiro stops by starting again as the Xbox, at
+    // this dashboard (an empty request: not even a shortcut's game).
     if (xemu_chihiro_mode()) {
+        RestartFor("");
         QuitAppNow(true);
         return;
     }

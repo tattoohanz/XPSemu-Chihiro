@@ -899,10 +899,40 @@ void xemu_ps5_chihiro_prepare(void)
 }
 
 static char xbox_autolaunch[1024];
+static bool boot_requested;
 
 char *xemu_ps5_chihiro_boot_image(void)
 {
     struct stat st;
+
+    /* The dashboard's request comes first: it restarted the app for it
+     * (another game, another machine, or none: back to the dashboard). */
+    if (stat(XEMU_PS5_CHIHIRO_BOOT_FILE, &st) == 0) {
+        boot_requested = true;
+        char *image = first_line(XEMU_PS5_CHIHIRO_BOOT_FILE);
+        unlink(XEMU_PS5_CHIHIRO_BOOT_FILE); /* Once: a crash restarts at the dashboard */
+        if (!image) {
+            fprintf(stderr, "XPSemu Chihiro: the dashboard asked for itself\n");
+            return NULL;
+        }
+        if (stat(image, &st) != 0) {
+            fprintf(stderr, "XPSemu Chihiro: can't boot %s\n", image);
+            free(image);
+            return NULL;
+        }
+        if (!xemu_media_is_xbox_disc(image)) {
+            fprintf(stderr, "XPSemu Chihiro: the dashboard asked for %s\n", image);
+            return image;
+        }
+        /* An Xbox game picked while a Chihiro ran: the Xbox starts, and its
+         * dashboard starts the game (xemu_ps5_xbox_autolaunch). */
+        snprintf(xbox_autolaunch, sizeof(xbox_autolaunch), "%s", image);
+        fprintf(stderr, "XPSemu Chihiro: the dashboard asked for the Xbox "
+                "game %s\n", image);
+        free(image);
+        return NULL;
+    }
+
     const char *id = xemu_ps5_own_title_id();
     if (id[0] && strcmp(id, XEMU_PS5_TITLE_ID) != 0) {
         /* A home-screen shortcut: its game, every time it is opened. An
@@ -915,25 +945,13 @@ char *xemu_ps5_chihiro_boot_image(void)
             return image;
         }
         free(image);
-        return NULL;
     }
-    char *image = first_line(XEMU_PS5_CHIHIRO_BOOT_FILE);
-    unlink(XEMU_PS5_CHIHIRO_BOOT_FILE); /* Once: a crash restarts at the dashboard */
-    if (image && stat(image, &st) == 0) {
-        if (!xemu_media_is_xbox_disc(image)) {
-            fprintf(stderr, "XPSemu Chihiro: the dashboard asked for %s\n", image);
-            return image;
-        }
-        /* An Xbox game picked while a Chihiro ran: the Xbox starts, and its
-         * dashboard starts the game (xemu_ps5_xbox_autolaunch). */
-        snprintf(xbox_autolaunch, sizeof(xbox_autolaunch), "%s", image);
-        fprintf(stderr, "XPSemu Chihiro: the dashboard asked for the Xbox "
-                "game %s\n", image);
-    } else if (image) {
-        fprintf(stderr, "XPSemu Chihiro: can't boot %s\n", image);
-    }
-    free(image);
     return NULL;
+}
+
+bool xemu_ps5_boot_requested(void)
+{
+    return boot_requested;
 }
 
 const char *xemu_ps5_xbox_autolaunch(void)
