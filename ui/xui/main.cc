@@ -310,7 +310,10 @@ void xemu_hud_update(void)
     // touchpad (Guide) brings it back. A press, not a hold, so the press
     // that closes it doesn't reopen it.
     static double started = ImGui::GetTime();
-    static bool booted_with_disc = g_config.sys.files.dvd_path &&
+    // XPSemu Chihiro: a Chihiro's image is in dvd_path too, but its machine
+    // waits (-S) for the dashboard to start it (DashboardScene::LaunchNow).
+    static bool booted_with_disc = !xemu_chihiro_mode() &&
+                                   g_config.sys.files.dvd_path &&
                                    g_config.sys.files.dvd_path[0];
     static bool guide_was_down = true;
     bool guide_down = g_input_mgr.CombinedButtons() & CONTROLLER_BUTTON_GUIDE;
