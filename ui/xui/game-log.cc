@@ -272,7 +272,10 @@ void GameLogStart(const GameLogInfo &info)
          "and hitches of 55 ms or more), the times the UI got the frame "
          "late, and whole-TLB wipes by cause; then the worst hitches, with "
          "what the GPU emulation did in them (shaders and pipelines with "
-         "the ms they took)\n"
+         "the ms they took) and where their time went (the GPU thread "
+         "waiting for the PS5 GPU and for one-off jobs, copying surfaces "
+         "back, submitting, idle; the Xbox CPU running, translating, idle; "
+         "the UI getting the frame)\n"
          "  and shaders and pipelines made: ms per second, how many, and "
          "the slowest one\n"
          "  and the Xbox CPU's translated code: blocks translated (and the "
@@ -400,6 +403,7 @@ void GameLogTick()
     int spread[4] = { 0 };
     struct Hitch {
         int ms, shaders, pipelines, down, up, tex, shader_us, pipeline_us;
+        int c[NV2A_PROF__COUNT]; // The frame's counters (where its time went)
     };
     Hitch hitch[3] = {};
     for (unsigned int j = 0; j < n; j++) {
@@ -419,7 +423,8 @@ void GameLogTick()
                         f.counters[NV2A_PROF_SURF_UPLOAD],
                         f.counters[NV2A_PROF_TEX_UPLOAD],
                         f.counters[NV2A_PROF_SHADER_US],
-                        f.counters[NV2A_PROF_PIPELINE_US] };
+                        f.counters[NV2A_PROF_PIPELINE_US], {} };
+            memcpy(h.c, f.counters, sizeof(h.c));
             for (int k = 0; k < 3; k++) {
                 if (h.ms > hitch[k].ms) {
                     std::swap(h, hitch[k]);
@@ -589,6 +594,22 @@ void GameLogTick()
                  hitch[k].ms, hitch[k].shaders, hitch[k].shader_us / 1000.0,
                  hitch[k].pipelines, hitch[k].pipeline_us / 1000.0,
                  hitch[k].down, hitch[k].up, hitch[k].tex);
+        Write(buf);
+        // XPSemu Chihiro: where the hitch's time went (profile.c)
+        const int *hc = hitch[k].c;
+        snprintf(buf, sizeof(buf),
+                 "             in it (ms): GPU thread waits %.0f, one-off "
+                 "waits %.0f, downloads %.0f, submits %.0f, idle %.0f | Xbox "
+                 "CPU runs %.0f (translating %.0f), idle %.0f | UI frame "
+                 "%.0f\n",
+                 hc[NV2A_PROF_WAIT_US] / 1000.0, hc[NV2A_PROF_AUX_US] / 1000.0,
+                 hc[NV2A_PROF_DOWN_US] / 1000.0,
+                 hc[NV2A_PROF_SUBMIT_US] / 1000.0,
+                 hc[NV2A_PROF_GPU_IDLE_US] / 1000.0,
+                 hc[NV2A_PROF_CPU_RUN_US] / 1000.0,
+                 hc[NV2A_PROF_TB_GEN_US] / 1000.0,
+                 hc[NV2A_PROF_CPU_IDLE_US] / 1000.0,
+                 hc[NV2A_PROF_UI_FRAME_US] / 1000.0);
         Write(buf);
     }
 

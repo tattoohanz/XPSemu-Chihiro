@@ -87,11 +87,41 @@ void nv2a_profile_present(void)
     }
 }
 
+/* XPSemu Chihiro: where each frame's time went (the stopwatches of
+ * hw/xbox/xemu-timing.h since the last flip, in microseconds), for the game
+ * log's hitch lines. A stopwatch is added when its step ends, so a step that
+ * spans a flip counts in the frame it ends in. */
+static void profile_frame_times(int *c)
+{
+    static const struct {
+        int xt, prof;
+    } map[] = {
+        { XT_FINISH_WAIT, NV2A_PROF_WAIT_US },
+        { XT_AUX_WAIT, NV2A_PROF_AUX_US },
+        { XT_DOWNLOAD, NV2A_PROF_DOWN_US },
+        { XT_FINISH_SUBMIT, NV2A_PROF_SUBMIT_US },
+        { XT_GPU_IDLE, NV2A_PROF_GPU_IDLE_US },
+        { XT_CPU_EXEC, NV2A_PROF_CPU_RUN_US },
+        { XT_CPU_IDLE, NV2A_PROF_CPU_IDLE_US },
+        { XT_TB_GEN, NV2A_PROF_TB_GEN_US },
+        { XT_UI_FRAME, NV2A_PROF_UI_FRAME_US },
+    };
+    static uint64_t last[ARRAY_SIZE(map)];
+    for (size_t i = 0; i < ARRAY_SIZE(map); i++) {
+        uint64_t ns = __atomic_load_n(&xemu_timing_ns[map[i].xt],
+                                      __ATOMIC_RELAXED);
+        uint64_t d = ns - last[i]; /* The totals only grow */
+        last[i] = ns;
+        c[map[i].prof] = (int)MIN(d / 1000, (uint64_t)INT32_MAX);
+    }
+}
+
 void nv2a_profile_flip_stall(void)
 {
     int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
     int64_t render_time = (now-g_nv2a_stats.last_flip_time)/1000;
 
+    profile_frame_times(g_nv2a_stats.frame_working.counters);
     g_nv2a_stats.frame_working.mspf = render_time;
     g_nv2a_stats.frame_history[g_nv2a_stats.frame_ptr] =
         g_nv2a_stats.frame_working;
