@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-cost.h"
 #include "qemu/main-loop.h"
 #include "qemu/timer.h"
 #include "qemu/lockable.h"
@@ -501,6 +502,8 @@ bool timer_expired(const QEMUTimer *timer_head, int64_t current_time)
     return timer_expired_ns(timer_head, current_time * timer_head->scale);
 }
 
+void (*xemu_cb_cost_hook)(int kind, const void *cb, uint64_t tsc);
+
 bool timerlist_run_timers(QEMUTimerList *timer_list)
 {
     QEMUTimer *ts;
@@ -576,7 +579,14 @@ bool timerlist_run_timers(QEMUTimerList *timer_list)
 
         /* run the callback (the timer list can be modified) */
         qemu_mutex_unlock(&timer_list->active_timers_lock);
+        /* XPSemu: timed for the game log (log only) */
+        void (*hook)(int, const void *, uint64_t) =
+            qatomic_read(&xemu_cb_cost_hook);
+        uint64_t xt0 = hook ? xemu_cost_tsc() : 0;
         cb(opaque);
+        if (hook) {
+            hook(XEMU_COST_TIMER, (const void *)cb, xemu_cost_tsc() - xt0);
+        }
         qemu_mutex_lock(&timer_list->active_timers_lock);
 
         progress = true;
