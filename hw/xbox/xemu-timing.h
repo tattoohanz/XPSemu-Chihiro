@@ -66,6 +66,58 @@ static inline void xemu_timing_add(int what, uint64_t since)
 }
 
 /*
+ * XPSemu: where the Xbox CPU thread's run time goes outside the game's own
+ * code (log only, the game log's "CPU thread in devices" line): each device
+ * access it makes, by memory region, and its waits for the machine lock
+ * (BQL). Timed with the TSC; only the CPU thread writes (current_cpu set),
+ * the game log reads and clears.
+ */
+#define XEMU_MMIO_SLOTS 32
+typedef struct XemuMmioSlot {
+    const void *mr;
+    const char *name;
+    uint64_t tsc;
+    uint32_t n;
+} XemuMmioSlot;
+extern XemuMmioSlot xemu_mmio_slot[XEMU_MMIO_SLOTS];
+extern uint64_t xemu_mmio_more_tsc, xemu_bql_wait_tsc;
+extern uint32_t xemu_mmio_more_n, xemu_bql_wait_n;
+
+static inline uint64_t xemu_tsc(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+    return __builtin_ia32_rdtsc();
+#else
+    return 0;
+#endif
+}
+
+static inline void xemu_mmio_note(const void *mr, const char *name,
+                                  uint64_t tsc)
+{
+    unsigned h = (unsigned)(((uintptr_t)mr >> 4) % XEMU_MMIO_SLOTS);
+    for (unsigned k = 0; k < 4; k++) {
+        XemuMmioSlot *s = &xemu_mmio_slot[(h + k) % XEMU_MMIO_SLOTS];
+        const void *cur = __atomic_load_n(&s->mr, __ATOMIC_ACQUIRE);
+        if (!cur) {
+            s->name = name;
+            __atomic_store_n(&s->mr, mr, __ATOMIC_RELEASE);
+            cur = mr;
+        }
+        if (cur == mr) {
+            __atomic_fetch_add(&s->tsc, tsc, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&s->n, 1, __ATOMIC_RELAXED);
+            return;
+        }
+    }
+    __atomic_fetch_add(&xemu_mmio_more_tsc, tsc, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&xemu_mmio_more_n, 1, __ATOMIC_RELAXED);
+}
+
+/* The game log's line (since the last call): "" until a second call. */
+void xemu_mmio_format(char *buf, size_t size);
+
+/*
  * Where translated code gets thrown away: a small table of guest physical
  * pages and how many blocks each lost (collisions just replace; the game
  * log reads and clears it).

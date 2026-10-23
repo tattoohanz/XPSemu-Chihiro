@@ -37,6 +37,8 @@
 #include "system/address-spaces.h"
 
 #include "memory-internal.h"
+#include "hw/core/cpu.h"
+#include "hw/xbox/xemu-timing.h"
 
 //#define DEBUG_UNASSIGNED
 
@@ -1482,8 +1484,13 @@ MemTxResult memory_region_dispatch_read(MemoryRegion *mr,
         return MEMTX_DECODE_ERROR;
     }
 
+    /* XPSemu: the Xbox CPU thread's device accesses (log only) */
+    uint64_t xt0 = current_cpu ? xemu_tsc() : 0;
     r = memory_region_dispatch_read1(mr, addr, pval, size, attrs);
     adjust_endianness(mr, pval, op);
+    if (xt0) {
+        xemu_mmio_note(mr, mr->name, xemu_tsc() - xt0);
+    }
     return r;
 }
 
@@ -1543,20 +1550,26 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
         return MEMTX_OK;
     }
 
+    /* XPSemu: the Xbox CPU thread's device accesses (log only) */
+    uint64_t xt0 = current_cpu ? xemu_tsc() : 0;
+    MemTxResult r;
     if (mr->ops->write) {
-        return access_with_adjusted_size(addr, &data, size,
-                                         mr->ops->impl.min_access_size,
-                                         mr->ops->impl.max_access_size,
-                                         memory_region_write_accessor, mr,
-                                         attrs);
+        r = access_with_adjusted_size(addr, &data, size,
+                                      mr->ops->impl.min_access_size,
+                                      mr->ops->impl.max_access_size,
+                                      memory_region_write_accessor, mr,
+                                      attrs);
     } else {
-        return
-            access_with_adjusted_size(addr, &data, size,
+        r = access_with_adjusted_size(addr, &data, size,
                                       mr->ops->impl.min_access_size,
                                       mr->ops->impl.max_access_size,
                                       memory_region_write_with_attrs_accessor,
                                       mr, attrs);
     }
+    if (xt0) {
+        xemu_mmio_note(mr, mr->name, xemu_tsc() - xt0);
+    }
+    return r;
 }
 
 void memory_region_init_io(MemoryRegion *mr,

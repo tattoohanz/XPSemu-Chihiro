@@ -28,6 +28,81 @@ uint64_t xemu_timing_max_ns[XT__COUNT];
 uint32_t xemu_inval_page[XEMU_INVAL_PAGES];
 uint32_t xemu_inval_hits[XEMU_INVAL_PAGES];
 uint32_t xemu_timing_count[XT__COUNT];
+XemuMmioSlot xemu_mmio_slot[XEMU_MMIO_SLOTS];
+uint64_t xemu_mmio_more_tsc, xemu_bql_wait_tsc;
+uint32_t xemu_mmio_more_n, xemu_bql_wait_n;
+
+typedef struct {
+    const char *name;
+    uint64_t tsc;
+    uint32_t n;
+} MmioRow;
+
+static int mmio_row_cmp(const void *a, const void *b)
+{
+    const MmioRow *x = a, *y = b;
+    return x->tsc < y->tsc ? 1 : x->tsc > y->tsc ? -1 : 0;
+}
+
+void xemu_mmio_format(char *buf, size_t size)
+{
+    static uint64_t last_tsc, last_ns;
+    uint64_t tsc = xemu_tsc(), ns = xemu_timing_now();
+    MmioRow rows[XEMU_MMIO_SLOTS + 1];
+    int nrows = 0;
+    for (int i = 0; i < XEMU_MMIO_SLOTS; i++) {
+        XemuMmioSlot *s = &xemu_mmio_slot[i];
+        if (!__atomic_load_n(&s->mr, __ATOMIC_ACQUIRE)) {
+            continue;
+        }
+        uint32_t n = __atomic_exchange_n(&s->n, 0, __ATOMIC_RELAXED);
+        uint64_t t = __atomic_exchange_n(&s->tsc, 0, __ATOMIC_RELAXED);
+        if (n) {
+            rows[nrows++] = (MmioRow){ s->name ? s->name : "?", t, n };
+        }
+    }
+    uint32_t more_n = __atomic_exchange_n(&xemu_mmio_more_n, 0,
+                                          __ATOMIC_RELAXED);
+    uint64_t more_t = __atomic_exchange_n(&xemu_mmio_more_tsc, 0,
+                                          __ATOMIC_RELAXED);
+    if (more_n) {
+        rows[nrows++] = (MmioRow){ "others", more_t, more_n };
+    }
+    uint32_t lock_n = __atomic_exchange_n(&xemu_bql_wait_n, 0,
+                                          __ATOMIC_RELAXED);
+    uint64_t lock_t = __atomic_exchange_n(&xemu_bql_wait_tsc, 0,
+                                          __ATOMIC_RELAXED);
+    buf[0] = 0;
+    uint64_t dtsc = tsc - last_tsc, dns = ns - last_ns;
+    bool first = !last_tsc;
+    last_tsc = tsc;
+    last_ns = ns;
+    if (first || !dtsc || !dns) {
+        return; /* The TSC's rate comes from two calls */
+    }
+    double ms_per_tsc = (double)dns / dtsc / 1e6;
+    double secs = dns / 1e9;
+    qsort(rows, nrows, sizeof(rows[0]), mmio_row_cmp);
+    uint64_t all_t = 0;
+    uint32_t all_n = 0;
+    for (int i = 0; i < nrows; i++) {
+        all_t += rows[i].tsc;
+        all_n += rows[i].n;
+    }
+    size_t len = snprintf(buf, size, "%.0f ms/s in %.0f k accesses/s",
+                          all_t * ms_per_tsc / secs, all_n / secs / 1e3);
+    for (int i = 0; i < nrows && i < 8 && len < size; i++) {
+        len += snprintf(buf + len, size - len, "%s %s %.1f (%.1f k)",
+                        i ? "," : ":", rows[i].name,
+                        rows[i].tsc * ms_per_tsc / secs,
+                        rows[i].n / secs / 1e3);
+    }
+    if (len < size) {
+        snprintf(buf + len, size - len, " | waiting for the machine lock "
+                 "%.0f ms/s (%.0f times/s)", lock_t * ms_per_tsc / secs,
+                 lock_n / secs);
+    }
+}
 
 void nv2a_profile_increment(void)
 {
