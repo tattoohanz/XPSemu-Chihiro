@@ -3558,7 +3558,11 @@ static void vertex_cow_snapshot(PGRAPHState *pg, hwaddr addr,
     }
     /* Before the arena is picked: a surface download may finish the
      * recording, and under rotation that moves on to the other slot. */
-    pgraph_vk_download_surfaces_in_range_if_dirty(pg, lo, copy_size);
+    /* XPSemu Chihiro: the cause and what for (log only) */
+    pgraph_vk_dl_for = (PGRAPHVkDlFor){ .start = lo, .len = copy_size };
+    PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_VERTEX,
+        pgraph_vk_download_surfaces_in_range_if_dirty(pg, lo, copy_size));
+    pgraph_vk_dl_for.len = 0;
 
     /* Snapshots persist across frames: the arena is append-only, so
      * appending needs no fence wait; it is reset at 3/4 full with

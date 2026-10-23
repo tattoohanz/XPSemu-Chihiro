@@ -43,6 +43,7 @@ extern "C" int xemu_ps5_threads_made;
 extern "C" void pgraph_vk_dl_causes_format(char *buf, size_t size);
 extern "C" void pgraph_vk_cpu_touch_format(char *buf, size_t size);
 extern "C" void pgraph_vk_reshape_format(char *buf, size_t size);
+extern "C" void pgraph_vk_dl_surfaces_format(char *buf, size_t size);
 extern "C" void pgraph_vk_diag_blit_format(char *buf, size_t size);
 extern "C" void pgraph_vk_diag_tex_format(char *buf, size_t size);
 extern "C" void xemu_ps5_pad_vibration_format(char *buf, size_t size);
@@ -252,7 +253,10 @@ void GameLogStart(const GameLogInfo &info)
          "  (XPSemu Chihiro) and when surfaces were copied back: downloads "
          "by cause - the Xbox CPU touching one, an image blit reading or "
          "partly writing one, a texture or vertices in its memory, a new "
-         "surface overlapping it, sync; and the rendered surfaces the "
+         "surface overlapping it, sync, a surface left unused, an evicted "
+         "surface's owed content; and the surfaces downloaded (cause, "
+         "color or zeta, address, size, pitch, format, and for a texture or "
+         "vertices what read them, times); and the rendered surfaces the "
          "Xbox CPU touched (address, size, format, downloads, accesses, "
          "bytes touched, the guest PC near it); and the surfaces dropped for "
          "another shape at the same address (old -> new, the rule that "
@@ -490,6 +494,11 @@ void GameLogTick()
         snprintf(buf, sizeof(buf), "           downloads by cause: %s\n",
                  causes);
         Write(buf);
+    }
+    char downloaded[2400];
+    pgraph_vk_dl_surfaces_format(downloaded, sizeof(downloaded));
+    if (downloaded[0]) {
+        Write(std::string("           downloaded: ") + downloaded + "\n");
     }
     char touched[640];
     pgraph_vk_cpu_touch_format(touched, sizeof(touched));

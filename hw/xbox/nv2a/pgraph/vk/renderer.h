@@ -838,9 +838,26 @@ enum {
     PGRAPH_VK_DL_INCOMPAT,  /* same address, other shape or format */
     PGRAPH_VK_DL_OLD,       /* unused for a while */
     PGRAPH_VK_DL_FLUSH,
+    PGRAPH_VK_DL_CREATE,    /* owed content of an evicted image, for a new
+                             * surface at the same address */
+    PGRAPH_VK_DL_PRUNE,     /* owed content of an evicted image dropped */
     PGRAPH_VK_DL__COUNT
 };
 extern int pgraph_vk_dl_cause;
+/* What a texture or vertex download was for (log only): set by the caller
+ * around the download, cleared after. */
+typedef struct PGRAPHVkDlFor {
+    hwaddr start;
+    size_t len;
+    bool texture;           /* else vertices */
+    bool surface_there;     /* a surface starts at the texture's address */
+    unsigned int fmt, width, height, levels, pitch;
+    bool cubemap;
+} PGRAPHVkDlFor;
+extern PGRAPHVkDlFor pgraph_vk_dl_for;
+/* The game log's line: the surfaces downloaded most since the last call,
+ * with the cause (and for a texture or vertices, what read them). */
+void pgraph_vk_dl_surfaces_format(char *buf, size_t size);
 /* The game log's lines (ui/xui/game-log.cc): downloads by cause, and the
  * rendered surfaces the Xbox CPU touched, since the last call. */
 void pgraph_vk_dl_causes_format(char *buf, size_t size);

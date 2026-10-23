@@ -1870,8 +1870,20 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
         // FIXME: Restructure to support rendering surfaces to cubemap faces
 
         // Writeback any surfaces which this texture may index
+        /* XPSemu Chihiro: what for (log only) */
+        int dl_saved = pgraph_vk_dl_cause;
+        pgraph_vk_dl_cause = PGRAPH_VK_DL_TEXTURE;
+        pgraph_vk_dl_for = (PGRAPHVkDlFor){
+            .start = texture_vram_offset, .len = texture_length,
+            .texture = true, .surface_there = surface != NULL,
+            .fmt = state.color_format, .width = state.width,
+            .height = state.height, .levels = state.levels,
+            .pitch = state.pitch, .cubemap = state.cubemap,
+        };
         pgraph_vk_download_surfaces_in_range_if_dirty(
             pg, texture_vram_offset, texture_length);
+        pgraph_vk_dl_for.len = 0;
+        pgraph_vk_dl_cause = dl_saved;
     }
 
     /* Native depth: a sampled zeta surface is served at native 1x:
