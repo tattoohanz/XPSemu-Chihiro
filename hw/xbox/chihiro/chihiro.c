@@ -3390,7 +3390,11 @@ static void chihiro_lpc_realize(DeviceState *dev, Error **errp)
                           "chihiro-lpc-io", 0x100);
     isa_register_ioport(isa, &s->ioport, 0x4000);
 
+#ifndef __PROSPERO__
+    /* XPSemu: not on the PS5, where unbuffered stderr costs each line
+     * 30-100 ms (xemu_ps5_early_init keeps it line buffered). */
     setvbuf(stderr, NULL, _IONBF, 0);
+#endif
 
     /* 0x80000140 bit 0 is the media board CPU's release. While it reads 0
      * the acLib uploads the firmware, writes 1 and returns 5 to be called

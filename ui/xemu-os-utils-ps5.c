@@ -313,7 +313,14 @@ void xemu_ps5_early_init(void)
     rename(XEMU_PS5_LOG, XEMU_PS5_LOG ".old");
     bool logging = freopen(XEMU_PS5_LOG, "w", stderr) != NULL;
     if (logging) {
-        setvbuf(stderr, NULL, _IONBF, 0);
+        /* Line buffered, as stdout: unbuffered, the console's libc writes
+         * stderr one character at a time, and each write to /data costs
+         * about 0.8 ms, so a line held its thread 30-100 ms (RADV's 10 s
+         * statistics line, under the GPU queue's lock; every byte of
+         * XEMU_CHIHIRO_LOG=ffb on the Xbox CPU thread). xemu.log showed it:
+         * other threads' lines landed inside a stderr line. */
+        static char stderr_buf[8192];
+        setvbuf(stderr, stderr_buf, _IOLBF, sizeof(stderr_buf));
         /* A title may start without descriptors 1 and 2, so the log may not
          * be on 2: put it there for the crash handler's write(2) too. */
         if (fileno(stderr) != STDERR_FILENO) {
