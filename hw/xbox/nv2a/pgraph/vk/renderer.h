@@ -187,6 +187,11 @@ typedef struct SurfaceBinding {
     VmaAllocation allocation_scratch;
 
     bool initialized;
+
+    /* XPSemu Chihiro (log only): created as the other view (color or zeta)
+     * of the surface just evicted at its address: bit 0 while its first use
+     * is to come, bit 1 when both were bound at once. */
+    uint8_t diag_view;
 } SurfaceBinding;
 
 typedef struct ShaderModuleInfo {
@@ -858,6 +863,17 @@ extern PGRAPHVkDlFor pgraph_vk_dl_for;
 /* The game log's line: the surfaces downloaded most since the last call,
  * with the cause (and for a texture or vertices, what read them). */
 void pgraph_vk_dl_surfaces_format(char *buf, size_t size);
+/* XPSemu Chihiro (log only): the first use of a surface created as the
+ * other view of one just evicted at its address (pgraph_vk_reshape_format) */
+enum {
+    PGRAPH_VK_VIEW_CLEAR_FULL,
+    PGRAPH_VK_VIEW_CLEAR_PART,
+    PGRAPH_VK_VIEW_DRAW_READ,   /* depth or stencil test, blending, a mask */
+    PGRAPH_VK_VIEW_DRAW_WRITE,  /* drawn over, the old content not read */
+    PGRAPH_VK_VIEW_UNUSED,      /* evicted before any use */
+    PGRAPH_VK_VIEW__COUNT
+};
+void pgraph_vk_view_first_use(SurfaceBinding *s, int use);
 /* The game log's lines (ui/xui/game-log.cc): downloads by cause, and the
  * rendered surfaces the Xbox CPU touched, since the last call. */
 void pgraph_vk_dl_causes_format(char *buf, size_t size);
