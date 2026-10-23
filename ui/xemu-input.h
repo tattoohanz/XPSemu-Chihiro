@@ -167,7 +167,17 @@ void xemu_input_update_ps5_pad_rumble(ControllerState *state);
 // motors (0-255 each), and the game log's line about it.
 void xemu_ps5_pad_vibrate(int player, uint8_t large, uint8_t small);
 void xemu_ps5_pad_vibration_format(char *buf, size_t size);
+// XPSemu Chihiro: a mouse for the gun games' aim. The movement since the
+// last call (counts, down positive) and the buttons (left 1, right 2,
+// middle 4, side 8/16); false while no mouse is open. The
+// first call opens it (within 2 s). And the game log's line about it.
+bool xemu_ps5_mouse_poll(int *dx, int *dy, uint32_t *buttons);
+void xemu_ps5_mouse_format(char *buf, size_t size);
 #endif
+// XPSemu Chihiro: where a gun game's player 1 aims, 0..1 across the game
+// picture; false outside a gun game, with the crosshair off, or while the
+// gun is off the picture (xemu-input-chihiro.c).
+bool xemu_chihiro_crosshair(float *x, float *y);
 ControllerState *xemu_input_get_bound(int index);
 void xemu_input_bind(int index, ControllerState *state, int save);
 bool xemu_input_bind_xmu(int player_index, int peripheral_port_index,

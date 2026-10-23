@@ -137,6 +137,33 @@ static float GetDisplayAspectRatio(int width, int height)
     }
 }
 
+#ifdef __PROSPERO__
+// XPSemu Chihiro: a gun game's crosshair where player 1 aims (there is no
+// cursor on the PS5): a ring with a gap at its centre, outlined in black so
+// it shows on light and dark scenes, sized from the picture's height.
+static void DrawCrosshair(ImDrawList *dl, ImVec2 p0, ImVec2 size)
+{
+    float ax, ay;
+    if (!xemu_chihiro_crosshair(&ax, &ay)) {
+        return;
+    }
+    ImVec2 c(p0.x + ax * size.x, p0.y + ay * size.y);
+    float r = size.y * 0.022f, gap = r * 0.35f, arm = r * 1.6f;
+    float w = std::max(1.5f, size.y / 720.0f * 2.0f);
+    const ImU32 dark = IM_COL32(0, 0, 0, 200);
+    const ImU32 lit = IM_COL32(120, 255, 90, 255);
+    for (int pass = 0; pass < 2; pass++) {
+        ImU32 col = pass ? lit : dark;
+        float t = pass ? w : w * 2.5f;
+        dl->AddCircle(c, r, col, 32, t);
+        dl->AddLine(ImVec2(c.x - arm, c.y), ImVec2(c.x - gap, c.y), col, t);
+        dl->AddLine(ImVec2(c.x + gap, c.y), ImVec2(c.x + arm, c.y), col, t);
+        dl->AddLine(ImVec2(c.x, c.y - arm), ImVec2(c.x, c.y - gap), col, t);
+        dl->AddLine(ImVec2(c.x, c.y + gap), ImVec2(c.x, c.y + arm), col, t);
+    }
+}
+#endif
+
 // flip: the image is bottom row first (the NV2A display image, made for GL).
 void RenderFramebuffer(XemuTexture tex, int width, int height, bool flip)
 {
@@ -188,6 +215,7 @@ void RenderFramebuffer(XemuTexture tex, int width, int height, bool flip)
     last1 = ImVec2(p0.x + size.x, p0.y + size.y);
     have_last = true;
     DrawBladeSides(ImGui::GetBackgroundDrawList(), last0, last1);
+    DrawCrosshair(ImGui::GetBackgroundDrawList(), p0, size);
 #endif
 }
 

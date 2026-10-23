@@ -267,7 +267,7 @@ static void report_unresolved_imports(void)
 
     char name[128], list[512] = "";
     unsigned long offset;
-    int checked = 0, missing = 0;
+    int checked = 0, missing = 0, mouse = 0;
     while (fscanf(f, "%lx %127s", &offset, name) == 2) {
         checked++;
         if (*(const uint64_t *)(EBOOT_BASE + offset) == 0) {
@@ -275,6 +275,12 @@ static void report_unresolved_imports(void)
             size_t used = strlen(g_missing_imports);
             snprintf(g_missing_imports + used, sizeof(g_missing_imports) - used,
                      "%s ", name);
+            /* XPSemu Chihiro: the mouse library is only for the gun
+             * games, which say so in their game log: no toast for it. */
+            if (!strncmp(name, "sceMouse", 8)) {
+                mouse++;
+                continue;
+            }
             if (missing++ < 12) {
                 snprintf(list + strlen(list), sizeof(list) - strlen(list),
                          "%s%s", missing > 1 ? " " : "", name);
@@ -282,8 +288,9 @@ static void report_unresolved_imports(void)
         }
     }
     fclose(f);
-    fprintf(stderr, "xemu PS5: %d of %d imports unresolved\n", missing,
-            checked);
+    fprintf(stderr, "xemu PS5: %d of %d imports unresolved%s\n",
+            missing + mouse, checked,
+            mouse ? " (the mouse's among them)" : "");
 
     if (missing) {
         char toast[600];
@@ -865,6 +872,13 @@ static const char kEnvTemplate[] =
     "# impacts and surfaces, Maximum Tune's knocks): strength in percent,\n"
     "# 100 = as the desktop build, 0 = off, up to 200\n"
     "XEMU_CHIHIRO_FFB=100\n"
+    "#\n"
+    "# Gun games (Ghost Squad, Virtua Cop 3, House of the Dead III): the\n"
+    "# crosshair's speed with a mouse and with the right stick, in percent,\n"
+    "# and the crosshair itself (0 = not drawn)\n"
+    "XEMU_CHIHIRO_MOUSE_SPEED=100\n"
+    "XEMU_CHIHIRO_AIM_SPEED=100\n"
+    "XEMU_CHIHIRO_CROSSHAIR=1\n"
     "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
