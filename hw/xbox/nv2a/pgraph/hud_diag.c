@@ -1146,13 +1146,8 @@ void pgraph_hud_diag_draw_impl(NV2AState *d)
         for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
             VertexAttribute *attr = &pg->vertex_attributes[i];
             if (attr->count) {
-                /* XPSemu Chihiro: the layout this renderer uploads
-                 * (vk/draw.c, inline array): each attribute aligned to its
-                 * element size. */
-                ia_vsize = ROUND_UP(ia_vsize, attr->size);
                 ia_off[i] = ia_vsize;
-                ia_vsize += attr->size * attr->count;
-                ia_vsize = ROUND_UP(ia_vsize, attr->size);
+                ia_vsize += pgraph_inline_attr_size(attr);
             }
         }
         n = ia_vsize ? (size_t)pg->inline_array_length * 4 / ia_vsize : 0;
@@ -1586,13 +1581,8 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
         for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
             VertexAttribute *attr = &pg->vertex_attributes[i];
             if (attr->count) {
-                /* XPSemu Chihiro: the layout this renderer uploads
-                 * (vk/draw.c, inline array): each attribute aligned to its
-                 * element size. */
-                ia_vsize = ROUND_UP(ia_vsize, attr->size);
                 ia_off[i] = ia_vsize;
-                ia_vsize += attr->size * attr->count;
-                ia_vsize = ROUND_UP(ia_vsize, attr->size);
+                ia_vsize += pgraph_inline_attr_size(attr);
             }
         }
         n = ia_vsize ? (size_t)pg->inline_array_length * 4 / ia_vsize : 0;

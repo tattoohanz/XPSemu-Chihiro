@@ -143,6 +143,7 @@ static void upload_pvideo_image(PGRAPHState *pg, PvideoState state)
     // Copy texture data to mapped device buffer
     uint8_t *mapped_memory_ptr;
 
+    pgraph_vk_wait_for_aux(pg);
     VK_CHECK(vmaMapMemory(r->allocator,
                           r->storage_buffers[BUFFER_STAGING_SRC].allocation,
                           (void *)&mapped_memory_ptr));
@@ -961,7 +962,8 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
     PGRAPHVkDisplayState *disp = &r->display;
 
     if (r->in_command_buffer &&
-        surface->draw_time >= r->command_buffer_start_time) {
+        (surface->draw_time >= r->command_buffer_start_time ||
+         pgraph_vk_surface_borrow_pending(r, surface))) {
         pgraph_vk_finish(pg, VK_FINISH_REASON_PRESENTING);
     }
 
@@ -979,10 +981,15 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
     pgraph_vk_begin_debug_marker(r, cmd, RGBA_YELLOW,
         "Display Surface %08"HWADDR_PRIx, surface->vram_addr);
 
-    pgraph_vk_transition_image_layout(pg, cmd, surface->image,
-                                      surface->host_fmt.vk_format,
-                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    /* In-place sampling: a surface sampled in place is read and left in
+     * SHADER_READ, the layout its recorded draws expect. */
+    bool sampled_in_place = surface->in_shader_read;
+    if (!sampled_in_place) {
+        pgraph_vk_transition_image_layout(
+            pg, cmd, surface->image, surface->host_fmt.vk_format,
+            pgraph_vk_surface_base_layout(surface),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
     pgraph_vk_transition_image_layout(
         pg, cmd, disp->image, VK_FORMAT_R8G8B8A8_UNORM,
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -1043,10 +1050,12 @@ static void render_display(PGRAPHState *pg, SurfaceBinding *surface)
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 #endif
 
-    pgraph_vk_transition_image_layout(pg, cmd, surface->image,
-                                      surface->host_fmt.vk_format,
-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    if (!sampled_in_place) {
+        pgraph_vk_transition_image_layout(
+            pg, cmd, surface->image, surface->host_fmt.vk_format,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            pgraph_vk_surface_base_layout(surface));
+    }
 
     pgraph_vk_transition_image_layout(pg, cmd, disp->image,
                                       VK_FORMAT_R8G8B8_UNORM,
@@ -1144,17 +1153,12 @@ void pgraph_vk_render_display(PGRAPHState *pg)
         height *= 2;
     }
 
-    /* XPSemu Chihiro (from the desktop fork): clamp the display to the
-     * surface when the CRTC area exceeds the framebuffer (a Chihiro's PAL
-     * 720x576 CRTC with a 640x480 render target). On real hardware the TV
-     * encoder fills the overscan with black; xemu has no TV encoder, so the
-     * picture matches the surface (else its bottom repeats its top). */
-    if (width > surface->width) {
-        width = surface->width;
-    }
-    if (height > surface->height) {
-        height = surface->height;
-    }
+    /* Clamp display to surface dimensions when CRTC area exceeds the
+     * framebuffer (e.g. PAL 720x576 CRTC with 640x480 render target).
+     * On real hardware the TV encoder fills the overscan with black;
+     * xemu has no TV encoder so we just match the surface size. */
+    if (width > surface->width)   width  = surface->width;
+    if (height > surface->height) height = surface->height;
 
     pgraph_apply_scaling_factor(pg, &width, &height);
 

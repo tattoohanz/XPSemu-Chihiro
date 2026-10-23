@@ -36,9 +36,22 @@ uint64_t pcrtc_read(void *opaque, hwaddr addr, unsigned int size)
         case NV_PCRTC_START:
             r = d->pcrtc.start;
             break;
-        case NV_PCRTC_RASTER:
-            r = d->pcrtc.raster++;
+        case NV_PCRTC_RASTER: {
+            /* HEURISTIC: engines that poll the beam read a scanline derived
+             * from the realtime clock and the vblank deadline, 525 lines a
+             * frame counted from the vblank interrupt; where the hardware
+             * starts its count, and its vblank bit, are not modelled. */
+            int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+            int64_t into_frame = NV2A_VBLANK_INTERVAL_NS -
+                                 (qatomic_read(&d->vblank_deadline) - now);
+            if (into_frame < 0) {
+                into_frame = 0;
+            } else if (into_frame >= NV2A_VBLANK_INTERVAL_NS) {
+                into_frame = NV2A_VBLANK_INTERVAL_NS - 1;
+            }
+            r = muldiv64(into_frame, 525, NV2A_VBLANK_INTERVAL_NS);
             break;
+        }
         default:
             break;
     }
@@ -66,6 +79,12 @@ void pcrtc_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size)
         val &= 0x07FFFFFF;
         // assert(val < memory_region_size(d->vram));
         d->pcrtc.start = val;
+        /* The scanout moved: the render thread resolves the new front buffer
+         * (GL); kick it under the fifo lock, as the pgraph MMIO path does. */
+        qatomic_set(&d->pgraph.scanout_changed, true);
+        xemu_tbrate_lock(&d->pfifo.lock);
+        pfifo_kick(d);
+        qemu_mutex_unlock(&d->pfifo.lock);
 
         NV2A_DPRINTF("PCRTC_START - %x %x %x %x\n",
                 d->vram_ptr[val+64], d->vram_ptr[val+64+1],

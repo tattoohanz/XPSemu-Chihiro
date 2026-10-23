@@ -437,6 +437,20 @@ perf:
   cache_shaders:
     type: bool
     default: true
+  # XPSemu Chihiro: from the desktop Chihiro fork's tuned NV2A.
+  # Real hardware speed: the GPU work is paced as on the real cabinet;
+  # off = uncapped.
+  real_hw_speed:
+    type: bool
+    default: false
+  # GPU boost: the tuned NV2A's own switches (always the tuned NV2A here).
+  optimizations:
+    type: bool
+    default: true
+  # Smooth first play: the game's known shaders are compiled during boot.
+  shader_seeding:
+    type: bool
+    default: true
 
 # CHIHIRO (not upstream): the Sega Chihiro machine (hw/xbox/chihiro).
 chihiro:

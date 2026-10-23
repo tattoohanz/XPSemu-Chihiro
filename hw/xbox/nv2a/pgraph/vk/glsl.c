@@ -2,6 +2,7 @@
  * Geforce NV2A PGRAPH Vulkan Renderer
  *
  * Copyright (c) 2024-2025 Matt Borgerson
+ * Copyright (c) 2026 Réda Chérif-Touil
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,10 +20,12 @@
 
 #include "qemu/osdep.h"
 #include "ui/xemu-settings.h"
+#include "qemu/fast-hash.h"
 #include "renderer.h"
 
 #include <assert.h>
 #include <glslang/Include/glslang_c_interface.h>
+#include <inttypes.h>
 #include <stdio.h>
 
 static const glslang_resource_t
@@ -141,16 +144,67 @@ void pgraph_vk_finalize_glsl_compiler(void)
     glslang_finalize_process();
 }
 
-static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
-                                       const char *glsl_source)
+/* Compiling GLSL to SPIR-V hitches the frame that first uses a shader, so
+ * the module is kept on disk and only the very first visit ever pays it. */
+static char *spv_cache_path(glslang_stage_t stage, const char *glsl_source)
 {
+    uint64_t h = fast_hash((const uint8_t *)glsl_source, strlen(glsl_source));
+    /* The module also depends on the SPIR-V target and the debug info: a
+     * cache carried to another GPU or driver must not hand over the other. */
+    /* XPSemu: in the app's cache folder, which the game log counts */
+    return g_strdup_printf("%scache/spirv/%02d_%s%s_%016" PRIx64 ".spv",
+                           xemu_settings_get_base_path(), (int)stage,
+                           pgraph_vk_spirv_1_6 ? "v16" : "v15",
+                           g_config.display.vulkan.debug_shaders ? "d" : "",
+                           h);
+}
+
+/* Chosen at device creation (instance.c); SPIR-V 1.5 until then. */
+bool pgraph_vk_spirv_1_6;
+
+/* XPSemu: the game log's "shaders +N (M from cache)" */
+unsigned int pgraph_vk_spirv_cache_hits, pgraph_vk_spirv_cache_misses;
+
+GByteArray *pgraph_vk_compile_glsl_to_spv(glslang_stage_t stage,
+                                          const char *glsl_source)
+{
+    /* XPSemu: perf.cache_shaders turns the disk cache off */
+    bool use_cache = g_config.perf.cache_shaders;
+    char *cache_path = spv_cache_path(stage, glsl_source);
+    gchar *blob = NULL;
+    gsize blob_len = 0;
+    if (use_cache && g_file_get_contents(cache_path, &blob, &blob_len, NULL)) {
+        if (blob_len > 20 && ((const uint32_t *)blob)[0] == 0x07230203) {
+            g_free(cache_path);
+            qatomic_inc(&pgraph_vk_spirv_cache_hits);
+            return g_byte_array_new_take((guint8 *)blob, blob_len);
+        }
+        g_free(blob);
+    }
+    qatomic_inc(&pgraph_vk_spirv_cache_misses);
+    /* glslang is called from the render thread and from the first-meet
+     * shader worker; its C interface shares process-global state, so the
+     * actual compilation is serialised (disk-cache hits above stay
+     * lock-free). The lock lives as long as the process, as the worker
+     * does, and is made once whichever thread comes first. */
+    static QemuMutex glslang_lock;
+    static gsize glslang_lock_ready;
+    if (g_once_init_enter(&glslang_lock_ready)) {
+        qemu_mutex_init(&glslang_lock);
+        g_once_init_leave(&glslang_lock_ready, 1);
+    }
+    qemu_mutex_lock(&glslang_lock);
     const glslang_input_t input = {
         .language = GLSLANG_SOURCE_GLSL,
         .stage = stage,
         .client = GLSLANG_CLIENT_VULKAN,
-        .client_version = GLSLANG_TARGET_VULKAN_1_3,
+        .client_version = pgraph_vk_spirv_1_6 ? GLSLANG_TARGET_VULKAN_1_3
+                                              : GLSLANG_TARGET_VULKAN_1_2,
         .target_language = GLSLANG_TARGET_SPV,
-        .target_language_version = GLSLANG_TARGET_SPV_1_6,
+        /* SPIR-V 1.6 lowers discard to demote, which needs the 1.3 feature
+         * enabled at device creation; without it stay on 1.5 (OpKill). */
+        .target_language_version = pgraph_vk_spirv_1_6 ? GLSLANG_TARGET_SPV_1_6
+                                                       : GLSLANG_TARGET_SPV_1_5,
         .code = glsl_source,
         .default_version = 460,
         .default_profile = GLSLANG_NO_PROFILE,
@@ -172,6 +226,7 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
                 glslang_shader_get_info_debug_log(shader), input.code);
         assert(!"glslang preprocess failed");
         glslang_shader_delete(shader);
+        qemu_mutex_unlock(&glslang_lock);
         return NULL;
     }
 
@@ -186,6 +241,7 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
                 glslang_shader_get_preprocessed_code(shader));
         assert(!"glslang parse failed");
         glslang_shader_delete(shader);
+        qemu_mutex_unlock(&glslang_lock);
         return NULL;
     }
 
@@ -203,6 +259,7 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
         assert(!"glslang link failed");
         glslang_program_delete(program);
         glslang_shader_delete(shader);
+        qemu_mutex_unlock(&glslang_lock);
         return NULL;
     }
 
@@ -246,63 +303,23 @@ static GByteArray *compile_glsl_to_spv(glslang_stage_t stage,
 
     glslang_program_delete(program);
     glslang_shader_delete(shader);
+    qemu_mutex_unlock(&glslang_lock);
 
-    return g_byte_array_new_take(data, num_program_bytes);
-}
-
-/*
- * XPSemu: compiled shaders are kept on disk (perf.cache_shaders), named by
- * a hash of their stage and GLSL, so a game's shaders compile once, not
- * every time XPSemu starts: glslang is most of a new shader's stutter.
- */
-unsigned int pgraph_vk_spirv_cache_hits, pgraph_vk_spirv_cache_misses;
-
-static char *spirv_cache_path(glslang_stage_t stage, const char *glsl_source)
-{
-    static char *dir;
-    if (!dir) {
-        dir = g_strdup_printf("%scache/spirv", xemu_settings_get_base_path());
-        g_mkdir_with_parents(dir, 0777);
-    }
-    GChecksum *sum = g_checksum_new(G_CHECKSUM_SHA256);
-    uint32_t tag = stage;
-    g_checksum_update(sum, (const guchar *)&tag, sizeof(tag));
-    g_checksum_update(sum, (const guchar *)glsl_source, strlen(glsl_source));
-    char *path = g_strdup_printf("%s/%.40s.spv", dir,
-                                 g_checksum_get_string(sum));
-    g_checksum_free(sum);
-    return path;
-}
-
-GByteArray *pgraph_vk_compile_glsl_to_spv(glslang_stage_t stage,
-                                          const char *glsl_source)
-{
-    bool use_cache = g_config.perf.cache_shaders &&
-                     !g_config.display.vulkan.debug_shaders;
-    char *path = use_cache ? spirv_cache_path(stage, glsl_source) : NULL;
-    gchar *cached = NULL;
-    gsize len = 0;
-    if (path && g_file_get_contents(path, &cached, &len, NULL) && len &&
-        len % 4 == 0) {
-        qatomic_inc(&pgraph_vk_spirv_cache_hits);
-        g_free(path);
-        return g_byte_array_new_take((guint8 *)cached, len);
-    }
-    g_free(cached);
-
-    GByteArray *spv = compile_glsl_to_spv(stage, glsl_source);
-    qatomic_inc(&pgraph_vk_spirv_cache_misses);
-    if (path && spv) {
-        /* Whole or not at all: a file cut short is never read back. */
-        char *tmp = g_strdup_printf("%s.tmp", path);
-        if (g_file_set_contents(tmp, (const gchar *)spv->data, spv->len,
+    if (use_cache) {
+        char *cache_dir = g_path_get_dirname(cache_path);
+        g_mkdir_with_parents(cache_dir, 0755);
+        /* XPSemu: whole or not at all, a file cut short is never read */
+        char *tmp = g_strdup_printf("%s.tmp", cache_path);
+        if (g_file_set_contents(tmp, (const char *)data, num_program_bytes,
                                 NULL)) {
-            rename(tmp, path);
+            rename(tmp, cache_path);
         }
         g_free(tmp);
+        g_free(cache_dir);
     }
-    g_free(path);
-    return spv;
+    g_free(cache_path);
+
+    return g_byte_array_new_take(data, num_program_bytes);
 }
 
 VkShaderModule pgraph_vk_create_shader_module_from_spv(PGRAPHVkState *r, GByteArray *spv)
