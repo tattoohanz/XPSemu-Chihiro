@@ -488,12 +488,15 @@ void xemu_ps5_pad_vibration_format(char *buf, size_t size)
 
 /*
  * XPSemu Chihiro: a USB or Bluetooth mouse (libSceMouse) for the gun games'
- * aim (xemu-input-chihiro.c). Opened for player 1's user once a gun game asks
- * for it, in merged mode (every mouse as one); each read returns the samples
- * since the last one, each with its own movement and the buttons as they
- * were. The prototypes and the layout of a sample are the PS4 SDK's, as
- * shadPS4 has them (src/core/libraries/mouse/mouse.h); the library has no
- * stub in the payload SDK (ps5/stubs/libSceMouse_stub.c).
+ * aim (xemu-input-chihiro.c). Linked as an import, the console leaves the
+ * library unbound for this title (its three imports stayed 0, 02c77dc), so
+ * the first gun game loads it at run time (sceKernelLoadStartModule) and
+ * looks its functions up by name, then by NID (sceKernelDlsym); each step is
+ * logged. Opened for player 1's user in merged mode (every mouse as one);
+ * each read returns the samples since the last one, each with its own
+ * movement and the buttons as they were. The prototypes, the layout of a
+ * sample and the NIDs are the PS4 SDK's, as shadPS4 has them
+ * (src/core/libraries/mouse/mouse.h, mouse.cpp).
  */
 typedef struct MouseOpenParam {
     uint8_t behavior; /* 1: every mouse merged into one */
@@ -508,14 +511,18 @@ typedef struct MouseData {
     uint8_t reserved[8];
 } MouseData;
 QEMU_BUILD_BUG_ON(sizeof(MouseData) != 40);
-int sceMouseInit(void);
-int sceMouseOpen(int32_t user_id, int32_t type, int32_t index,
-                 const MouseOpenParam *param);
-int sceMouseRead(int32_t handle, MouseData *data, int32_t num);
-int sceMouseClose(int32_t handle);
+int sceKernelLoadStartModule(const char *path, size_t args, const void *argp,
+                             uint32_t flags, const void *option, int *result);
+int sceKernelDlsym(int handle, const char *symbol, void **address);
+
+static int (*mouse_init)(void);
+static int (*mouse_open)(int32_t user_id, int32_t type, int32_t index,
+                         const MouseOpenParam *param);
+static int (*mouse_read)(int32_t handle, MouseData *data, int32_t num);
 
 static struct {
-    bool wanted, inited, connected;
+    bool wanted, tried, loaded, inited, connected;
+    int module, load_rc, sym_rc;
     int init_rc, open_rc, logged_rc;
     int32_t handle;
     uint32_t buttons;
@@ -523,31 +530,77 @@ static struct {
     int samples, failures, last_rc;
     int64_t moved;
     uint32_t pressed;
-} g_mouse = { .handle = -1, .logged_rc = 1 };
+} g_mouse = { .module = -1, .handle = -1, .logged_rc = 1 };
 
-static bool mouse_imports_ok(void)
+static void *mouse_sym(const char *name, const char *nid)
 {
-    return xemu_ps5_import_ok("sceMouseInit") &&
-           xemu_ps5_import_ok("sceMouseOpen") &&
-           xemu_ps5_import_ok("sceMouseRead");
+    void *by_name = NULL, *by_nid = NULL;
+    int rc_name = sceKernelDlsym(g_mouse.module, name, &by_name);
+    int rc_nid = by_name ? 0 : sceKernelDlsym(g_mouse.module, nid, &by_nid);
+    void *p = by_name ? by_name : by_nid;
+    fprintf(stderr, "xemu PS5 mouse: %s by name %#x%s, by NID %s %#x%s\n",
+            name, rc_name, by_name ? " found" : "", nid, rc_nid,
+            by_nid ? " found" : "");
+    if (!p) {
+        g_mouse.sym_rc = rc_nid ? rc_nid : rc_name;
+    }
+    return p;
+}
+
+/* Once: the module, then its three functions. */
+static bool mouse_load(void)
+{
+    if (g_mouse.tried) {
+        return g_mouse.loaded;
+    }
+    g_mouse.tried = true;
+    if (!xemu_ps5_import_ok("sceKernelLoadStartModule") ||
+        !xemu_ps5_import_ok("sceKernelDlsym")) {
+        fprintf(stderr, "xemu PS5 mouse: no module loader\n");
+        return false;
+    }
+    static const char *const paths[] = {
+        "libSceMouse.sprx",
+        "/system/common/lib/libSceMouse.sprx",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(paths) && g_mouse.module < 0; i++) {
+        int status = 0;
+        int h = sceKernelLoadStartModule(paths[i], 0, NULL, 0, NULL, &status);
+        fprintf(stderr, "xemu PS5 mouse: load %s: %#x, status %#x\n",
+                paths[i], h, status);
+        g_mouse.load_rc = h;
+        if (h >= 0) {
+            g_mouse.module = h;
+        }
+    }
+    if (g_mouse.module < 0) {
+        return false;
+    }
+    mouse_init = (int (*)(void))mouse_sym("sceMouseInit", "Qs0wWulgl7U");
+    mouse_open = (int (*)(int32_t, int32_t, int32_t, const MouseOpenParam *))
+        mouse_sym("sceMouseOpen", "RaqxZIf6DvE");
+    mouse_read = (int (*)(int32_t, MouseData *, int32_t))
+        mouse_sym("sceMouseRead", "x8qnXqh-tiM");
+    g_mouse.loaded = mouse_init && mouse_open && mouse_read;
+    return g_mouse.loaded;
 }
 
 /* From xemu_input_ps5_pads_scan (every 2 s, the UI thread). */
 static void mouse_scan(void)
 {
     if (!g_mouse.wanted || g_mouse.handle >= 0 || g_players[0].user < 0 ||
-        !mouse_imports_ok()) {
+        !mouse_load()) {
         return;
     }
     if (!g_mouse.inited) {
-        g_mouse.init_rc = sceMouseInit();
+        g_mouse.init_rc = mouse_init();
         g_mouse.inited = true;
         fprintf(stderr, "xemu PS5 mouse: init %#x\n", g_mouse.init_rc);
     }
     MouseOpenParam merged = { .behavior = 1 };
-    int rc = sceMouseOpen(g_players[0].user, 0, 0, &merged);
+    int rc = mouse_open(g_players[0].user, 0, 0, &merged);
     if (rc < 0) {
-        rc = sceMouseOpen(g_players[0].user, 0, 0, NULL);
+        rc = mouse_open(g_players[0].user, 0, 0, NULL);
     }
     g_mouse.open_rc = rc;
     if (rc >= 0) {
@@ -570,7 +623,7 @@ bool xemu_ps5_mouse_poll(int *dx, int *dy, uint32_t *buttons)
         return false;
     }
     MouseData d[32];
-    int n = sceMouseRead(g_mouse.handle, d, ARRAY_SIZE(d));
+    int n = mouse_read(g_mouse.handle, d, ARRAY_SIZE(d));
     if (n < 0) {
         g_mouse.failures++;
         g_mouse.last_rc = n;
@@ -607,8 +660,13 @@ void xemu_ps5_mouse_format(char *buf, size_t size)
     if (!g_mouse.wanted) {
         return;
     }
-    if (!mouse_imports_ok()) {
-        snprintf(buf, size, "the console left libSceMouse unresolved");
+    if (!g_mouse.tried) {
+        snprintf(buf, size, "not tried yet");
+    } else if (g_mouse.module < 0) {
+        snprintf(buf, size, "libSceMouse not loaded (%#x)", g_mouse.load_rc);
+    } else if (!g_mouse.loaded) {
+        snprintf(buf, size, "libSceMouse loaded (module %d), its functions "
+                 "not found (%#x)", g_mouse.module, g_mouse.sym_rc);
     } else if (g_mouse.handle < 0) {
         snprintf(buf, size, "not open (init %#x, open %#x)", g_mouse.init_rc,
                  g_mouse.open_rc);

@@ -267,7 +267,7 @@ static void report_unresolved_imports(void)
 
     char name[128], list[512] = "";
     unsigned long offset;
-    int checked = 0, missing = 0, mouse = 0;
+    int checked = 0, missing = 0;
     while (fscanf(f, "%lx %127s", &offset, name) == 2) {
         checked++;
         if (*(const uint64_t *)(EBOOT_BASE + offset) == 0) {
@@ -275,12 +275,6 @@ static void report_unresolved_imports(void)
             size_t used = strlen(g_missing_imports);
             snprintf(g_missing_imports + used, sizeof(g_missing_imports) - used,
                      "%s ", name);
-            /* XPSemu Chihiro: the mouse library is only for the gun
-             * games, which say so in their game log: no toast for it. */
-            if (!strncmp(name, "sceMouse", 8)) {
-                mouse++;
-                continue;
-            }
             if (missing++ < 12) {
                 snprintf(list + strlen(list), sizeof(list) - strlen(list),
                          "%s%s", missing > 1 ? " " : "", name);
@@ -288,9 +282,8 @@ static void report_unresolved_imports(void)
         }
     }
     fclose(f);
-    fprintf(stderr, "xemu PS5: %d of %d imports unresolved%s\n",
-            missing + mouse, checked,
-            mouse ? " (the mouse's among them)" : "");
+    fprintf(stderr, "xemu PS5: %d of %d imports unresolved\n", missing,
+            checked);
 
     if (missing) {
         char toast[600];
