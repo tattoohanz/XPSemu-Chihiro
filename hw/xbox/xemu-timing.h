@@ -41,6 +41,9 @@ enum {
     XT_SMC_WRITE,     /* (count only) CPU store into a page holding code */
     XT_SMC_EXIT,      /* (count only) the running block rewrote itself */
     XT_TB_INVAL_DMA,  /* (count only) blocks thrown away by a device write */
+    XT_SUBMIT_LOCK,   /* GPU thread: XT_FINISH_SUBMIT's wait for the queue */
+    XT_UI_QUEUE,      /* UI: holding the queue (its submit and present) */
+    XT_PCACHE,        /* The pipeline cache save (driver read and write) */
     XT__COUNT
 };
 

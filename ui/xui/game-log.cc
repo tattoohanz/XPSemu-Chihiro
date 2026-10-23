@@ -599,17 +599,21 @@ void GameLogTick()
         const int *hc = hitch[k].c;
         snprintf(buf, sizeof(buf),
                  "             in it (ms): GPU thread waits %.0f, one-off "
-                 "waits %.0f, downloads %.0f, submits %.0f, idle %.0f | Xbox "
-                 "CPU runs %.0f (translating %.0f), idle %.0f | UI frame "
-                 "%.0f\n",
+                 "waits %.0f, downloads %.0f, submits %.0f (waiting for the "
+                 "queue %.0f), idle %.0f | Xbox CPU runs %.0f (translating "
+                 "%.0f), idle %.0f | UI frame %.0f, holding the queue %.0f | "
+                 "pipeline cache save %.0f\n",
                  hc[NV2A_PROF_WAIT_US] / 1000.0, hc[NV2A_PROF_AUX_US] / 1000.0,
                  hc[NV2A_PROF_DOWN_US] / 1000.0,
                  hc[NV2A_PROF_SUBMIT_US] / 1000.0,
+                 hc[NV2A_PROF_SUBMIT_LOCK_US] / 1000.0,
                  hc[NV2A_PROF_GPU_IDLE_US] / 1000.0,
                  hc[NV2A_PROF_CPU_RUN_US] / 1000.0,
                  hc[NV2A_PROF_TB_GEN_US] / 1000.0,
                  hc[NV2A_PROF_CPU_IDLE_US] / 1000.0,
-                 hc[NV2A_PROF_UI_FRAME_US] / 1000.0);
+                 hc[NV2A_PROF_UI_FRAME_US] / 1000.0,
+                 hc[NV2A_PROF_UI_QUEUE_US] / 1000.0,
+                 hc[NV2A_PROF_PCACHE_US] / 1000.0);
         Write(buf);
     }
 

@@ -171,9 +171,18 @@ static void pgraph_vk_flip_stall(NV2AState *d)
     pgraph_vk_libpump_step(&d->pgraph);
 
     /* The pipeline cache reaches disk every 600 flips (about 10 s), on a
-     * thread: the shutdown path does not save it. */
+     * thread: the shutdown path does not save it. XPSemu Chihiro:
+     * XEMU_PCACHE_SAVE_FLIPS in env.txt sets how many (0 = only when the
+     * game ends, from the UI), to test whether the save hitches a game. */
     static unsigned flips;
-    if (++flips % 600 == 0) {
+    static int every = -1;
+    if (every < 0) {
+        const char *e = getenv("XEMU_PCACHE_SAVE_FLIPS");
+        every = e && *e ? MAX(atoi(e), 0) : 600;
+        fprintf(stderr, "nv2a: pipeline cache saved every %d flips%s\n",
+                every, every ? "" : " (only when the game ends)");
+    }
+    if (every && ++flips % every == 0) {
         pgraph_vk_save_pipeline_cache(&d->pgraph, false);
     }
 }

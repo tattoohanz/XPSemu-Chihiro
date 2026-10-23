@@ -30,6 +30,7 @@ extern "C" {
 #include "xemu-hud.h"
 #include "../xemu-texture.h"
 #include "hw/xbox/nv2a/pgraph/vk/vk-ui.h"
+#include "hw/xbox/xemu-timing.h"
 
 #ifdef __PROSPERO__
 // The system keeps the title's launch image up until the title hides it.
@@ -824,9 +825,11 @@ void xemu_vk_present_frame(ImDrawData *draw_data)
     };
 
     pgraph_vk_lock_queue();
+    uint64_t xt_queue = xemu_timing_now(); // XPSemu Chihiro: XT_UI_QUEUE
     CheckVkResult(vkQueueSubmit(g_vk.ctx.queue, 1, &submit, fd->Fence));
     err = vkQueuePresentKHR(g_vk.ctx.queue, &present);
     pgraph_vk_unlock_queue();
+    xemu_timing_add(XT_UI_QUEUE, xt_queue);
     if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
         g_vk.swapchain_rebuild = true;
     } else {
