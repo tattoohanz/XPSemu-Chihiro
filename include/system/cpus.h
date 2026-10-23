@@ -29,6 +29,13 @@ static inline bool xemu_tbrate_enabled(void)
     return false;
 }
 
+/*
+ * XPSemu Chihiro: the NV2A from the desktop Chihiro fork takes its GPU locks
+ * through the XEMU_TBRATE probe's helper; the probe is not ported, so the
+ * lock is taken plainly.
+ */
+#define xemu_tbrate_lock(m) qemu_mutex_lock(m)
+
 /* end interface for cpus accelerator threads */
 
 bool qemu_in_vcpu_thread(void);

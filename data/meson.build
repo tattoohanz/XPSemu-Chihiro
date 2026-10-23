@@ -4,6 +4,7 @@ pfiles = [
   'xmu_mask.png',
   'logo_sdf.png',
   'xemu_64x64.png',
+  'shader_seeds.bin',  # XPSemu Chihiro: the desktop fork's NV2A shader seeds
   'abxy.ttf',
   'Roboto-Medium.ttf',
   'RobotoCondensed-Regular.ttf',
