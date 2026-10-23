@@ -13,3 +13,8 @@ build as `RADV_ARCHIVE=<that file>`.
   `sceAgcDriverSubmitDcb`, `sceAgcSuspendPoint` and `sceVideoOutSubmitFlip`.
   For the ~110 ms submission stalls about every 10 s (OutRun 2 SP, Ghost
   Squad; d259035's game logs).
+- `radv-queue-submit-diag.patch` (log only): a vkQueueSubmit over 40 ms
+  logs where it went: building the submission, the runtime's queue lock,
+  the driver (RADV's preambles, the winsys submissions) and the rest. With
+  the patch above nothing in the winsys was slow while the game log still
+  showed the ~110 ms submits, so the time is above it.
