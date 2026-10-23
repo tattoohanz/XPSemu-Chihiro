@@ -20,6 +20,10 @@
  * Maximum Tune's shifter is an H gate; the paddles move its lever one gear
  * at a time and leave it there, as the desktop fork does (wmmt_lever).
  *
+ * Gun games (Ghost Squad, Virtua Cop 3, The House of the Dead III): a
+ * crosshair over the picture, moved by a mouse or the right stick
+ * (gun_inputs, below).
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -35,6 +39,7 @@
 #include "hw/xbox/chihiro/chihiro-driveboard-v257.h"
 #include "hw/xbox/chihiro/chihiro-driveboard-sega838.h"
 #include "hw/xbox/chihiro/chihiro-cabinet.h"
+#include "hw/xbox/chihiro/chihiro-cardreader-hw210.h"
 #include "qemu/timer.h"
 
 /* Stick travel below this is the stick resting (DualSense drift). */
@@ -176,6 +181,156 @@ static void chihiro_ffb_rumble(void)
 #endif
 }
 
+/*
+ * XPSemu Chihiro: the gun games. The desktop fork aims with the system
+ * cursor or a light gun (chihiro_gun_aim there); the PS5 has neither, so a
+ * crosshair moves over the picture:
+ *   a mouse (USB or Bluetooth): moves it. Left button the trigger, right
+ *     the gun's body button (as the desktop's defaults), middle Change
+ *     (Ghost Squad) or the pedal (Virtua Cop 3), a side button reload.
+ *     Moved past the picture's edge, the gun is off the picture (a reload),
+ *     as on the desktop.
+ *   the DualSense: the right stick moves it (finer near the centre). R2 the
+ *     trigger, L2 reload (the gun off the picture while held), R1 the body
+ *     button, L1 Change or the pedal, Circle card in (Ghost Squad).
+ * The aim goes into player 1's analog pair (0/1) as a fraction of the
+ * picture, as the desktop sends it; while off the picture both are 0 and
+ * the SCREEN switch (sw0 bit 0) is on. env.txt: XEMU_CHIHIRO_MOUSE_SPEED and
+ * XEMU_CHIHIRO_AIM_SPEED (percent), XEMU_CHIHIRO_CROSSHAIR (0 = none).
+ */
+#define AIM_SAFE 0.01f          /* the desktop's: nearer an edge is off */
+#define AIM_STICK_EDGE 0.02f    /* the stick keeps it on the picture */
+#define AIM_MOUSE_PAST 0.03f    /* how far past the edge a mouse takes it */
+#define AIM_MOUSE_ACROSS 1000.0f /* mouse counts across the picture (100%) */
+#define AIM_STICK_ACROSS_S 0.75f /* seconds across it, stick full (100%) */
+#define AIM_DEADZONE 0.12f
+
+static float g_aim_x = 0.5f, g_aim_y = 0.5f;
+static bool g_aim_off, g_gun_game;
+
+static int env_percent(const char *name, int def, int max)
+{
+    const char *e = getenv(name);
+    int v = e && *e ? atoi(e) : def;
+    return v < 0 ? 0 : v > max ? max : v;
+}
+
+static bool gun_profile(int profile)
+{
+    return profile == CONFIG_CHIHIRO_JVS_PROFILE_HOTD3 ||
+           profile == CONFIG_CHIHIRO_JVS_PROFILE_VC3 ||
+           profile == CONFIG_CHIHIRO_JVS_PROFILE_GS;
+}
+
+static float clampf(float v, float lo, float hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* -1..1, the deadzone taken out and squared: fine aim near the centre */
+static float aim_axis(int16_t raw)
+{
+    float v = raw / 32767.0f;
+    float m = fabsf(v);
+    if (m < AIM_DEADZONE) {
+        return 0.0f;
+    }
+    m = clampf((m - AIM_DEADZONE) / (1.0f - AIM_DEADZONE), 0.0f, 1.0f);
+    return copysignf(m * m, v);
+}
+
+static void gun_inputs(ChihiroJVSState *jvs, const ControllerState *pad,
+                       int profile, uint8_t *sw0, uint8_t *sw1)
+{
+    static int stick_pct = -1, mouse_pct = -1;
+    static int64_t last_ns;
+    if (stick_pct < 0) {
+        stick_pct = env_percent("XEMU_CHIHIRO_AIM_SPEED", 100, 400);
+        mouse_pct = env_percent("XEMU_CHIHIRO_MOUSE_SPEED", 100, 400);
+    }
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    float dt = last_ns ? (now - last_ns) / 1e9f : 0.0f;
+    last_ns = now;
+    dt = clampf(dt, 0.0f, 0.05f);
+
+    /* The picture is 4:3: the same speed on screen up and down is 4/3 of
+     * the fraction. Screen down is positive; xemu's Y axes are up. */
+    float sx = pad ? aim_axis(pad->axis[CONTROLLER_AXIS_RSTICK_X]) : 0.0f;
+    float sy = pad ? -aim_axis(pad->axis[CONTROLLER_AXIS_RSTICK_Y]) : 0.0f;
+    if (sx != 0.0f || sy != 0.0f) {
+        float v = stick_pct / 100.0f / AIM_STICK_ACROSS_S * dt;
+        g_aim_x = clampf(g_aim_x + sx * v, AIM_STICK_EDGE,
+                         1.0f - AIM_STICK_EDGE);
+        g_aim_y = clampf(g_aim_y + sy * v * 4.0f / 3.0f, AIM_STICK_EDGE,
+                         1.0f - AIM_STICK_EDGE);
+    }
+
+    uint32_t mb = 0;
+#ifdef __PROSPERO__
+    int mdx, mdy;
+    xemu_ps5_mouse_poll(&mdx, &mdy, &mb);
+    if (mdx || mdy) {
+        float k = mouse_pct / 100.0f / AIM_MOUSE_ACROSS;
+        g_aim_x = clampf(g_aim_x + mdx * k, -AIM_MOUSE_PAST,
+                         1.0f + AIM_MOUSE_PAST);
+        g_aim_y = clampf(g_aim_y + mdy * k * 4.0f / 3.0f, -AIM_MOUSE_PAST,
+                         1.0f + AIM_MOUSE_PAST);
+    }
+#else
+    (void)mouse_pct;
+#endif
+
+    bool fire = trigger(pad, CONTROLLER_AXIS_RTRIG) > 0.5f || (mb & 0x01);
+    bool body = pressed(pad, CONTROLLER_BUTTON_BLACK) || (mb & 0x02);
+    bool change = pressed(pad, CONTROLLER_BUTTON_WHITE) || (mb & 0x04);
+    bool reload = trigger(pad, CONTROLLER_AXIS_LTRIG) > 0.5f || (mb & 0x18);
+    bool off = reload || g_aim_x < AIM_SAFE || g_aim_x > 1.0f - AIM_SAFE ||
+               g_aim_y < AIM_SAFE || g_aim_y > 1.0f - AIM_SAFE;
+    g_aim_off = off;
+    if (off) {
+        jvs->analog[0] = 0;
+        jvs->analog[1] = 0;
+        *sw0 |= 0x01;
+    } else {
+        jvs->analog[0] = (uint16_t)(g_aim_x * 0xFFFF);
+        jvs->analog[1] = (uint16_t)(g_aim_y * 0xFFFF);
+    }
+    if (fire) {
+        *sw0 |= 0x02;
+    }
+    if (body) {
+        *sw1 |= 0x80;
+    }
+    if (change && profile != CONFIG_CHIHIRO_JVS_PROFILE_HOTD3) {
+        *sw1 |= 0x40;
+    }
+    if (profile == CONFIG_CHIHIRO_JVS_PROFILE_GS) {
+        /* Card In pushes the card in hand; the switch follows the slot. */
+        static bool card_was;
+        if (edge(pressed(pad, CONTROLLER_BUTTON_B), &card_was)) {
+            chihiro_hw210_card_key(0);
+        }
+        if (chihiro_hw210_enabled && chihiro_card_reader_present(0)) {
+            *sw1 |= 0x20;
+        }
+    }
+}
+
+bool xemu_chihiro_crosshair(float *x, float *y)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = env_percent("XEMU_CHIHIRO_CROSSHAIR", 1, 1);
+    }
+    if (!on || !g_gun_game || g_aim_off || !xemu_chihiro_mode() ||
+        !chihiro_jvs_global) {
+        return false;
+    }
+    *x = chihiro_jvs_global->analog[0] / 65535.0f;
+    *y = chihiro_jvs_global->analog[1] / 65535.0f;
+    return true;
+}
+
 void xemu_input_update_chihiro_jvs(void)
 {
     if (!xemu_chihiro_mode() || !chihiro_jvs_global) {
@@ -190,8 +345,14 @@ void xemu_input_update_chihiro_jvs(void)
     if (profile < 0) {
         profile = g_config.chihiro.jvs.profile;
     }
+    g_gun_game = gun_profile(profile);
 
     switch (profile) {
+    case CONFIG_CHIHIRO_JVS_PROFILE_HOTD3:
+    case CONFIG_CHIHIRO_JVS_PROFILE_VC3:
+    case CONFIG_CHIHIRO_JVS_PROFILE_GS:
+        gun_inputs(jvs, pad, profile, &sw0, &sw1);
+        break;
     case CONFIG_CHIHIRO_JVS_PROFILE_CTX:
     case CONFIG_CHIHIRO_JVS_PROFILE_OR2:
     case CONFIG_CHIHIRO_JVS_PROFILE_WMMT2: {
@@ -263,7 +424,7 @@ void xemu_input_update_chihiro_jvs(void)
         break;
     }
     default:
-        /* Gun and cockpit games have no controller layout here yet: the
+        /* Cockpit games (Gundam) have no controller layout here yet: the
          * system buttons below still work their menus. */
         break;
     }

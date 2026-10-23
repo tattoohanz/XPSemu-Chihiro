@@ -47,6 +47,7 @@ extern "C" void pgraph_vk_diag_blit_format(char *buf, size_t size);
 extern "C" void pgraph_vk_diag_tex_format(char *buf, size_t size);
 extern "C" void xemu_ps5_pad_vibration_format(char *buf, size_t size);
 extern "C" void driveboard_diag_format(char *buf, size_t size);
+extern "C" void xemu_ps5_mouse_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -259,7 +260,9 @@ void GameLogStart(const GameLogInfo &info)
          "memory (why the surface there could not serve); the drive board's "
          "force feedback on the DualSense (motor sends, strongest level, "
          "failures) and, on a Sega 838 cabinet, the drive board's state and "
-         "the commands the game sent it (wire byte:count)\n"
+         "the commands the game sent it (wire byte:count); in a gun game, "
+         "the mouse (open or why not, samples read, counts moved, buttons "
+         "seen)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -501,6 +504,11 @@ void GameLogTick()
     driveboard_diag_format(diag, sizeof(diag));
     if (diag[0]) {
         Write(std::string("           drive board: ") + diag + "\n");
+    }
+    /* XPSemu Chihiro: the gun games' mouse */
+    xemu_ps5_mouse_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           mouse: ") + diag + "\n");
     }
 
     // The stopwatches (hw/xbox/xemu-timing.h): ms per second, and times.

@@ -128,6 +128,8 @@ static void player_plug(int i, bool on)
     }
 }
 
+static void mouse_scan(void); /* XPSemu Chihiro: the gun games' mouse */
+
 /* From the UI thread with the BQL (xemu_input_update_controllers): plugging
  * a port adds USB devices, so never from inside the Xbox's USB polling. */
 void xemu_input_ps5_pads_scan(void)
@@ -153,6 +155,7 @@ void xemu_input_ps5_pads_scan(void)
     if (one->user >= 0 && one->handle < 0) {
         player_open(0);
     }
+    mouse_scan();
 
     LoginList list;
     memset(&list, 0xFF, sizeof(list));
@@ -481,6 +484,149 @@ void xemu_ps5_pad_vibration_format(char *buf, size_t size)
     }
     g_vib.sends = g_vib.failures = 0;
     g_vib.peak = 0;
+}
+
+/*
+ * XPSemu Chihiro: a USB or Bluetooth mouse (libSceMouse) for the gun games'
+ * aim (xemu-input-chihiro.c). Opened for player 1's user once a gun game asks
+ * for it, in merged mode (every mouse as one); each read returns the samples
+ * since the last one, each with its own movement and the buttons as they
+ * were. The prototypes and the layout of a sample are the PS4 SDK's, as
+ * shadPS4 has them (src/core/libraries/mouse/mouse.h); the library has no
+ * stub in the payload SDK (ps5/stubs/libSceMouse_stub.c).
+ */
+typedef struct MouseOpenParam {
+    uint8_t behavior; /* 1: every mouse merged into one */
+    uint8_t reserved[7];
+} MouseOpenParam;
+typedef struct MouseData {
+    uint64_t timestamp;
+    bool connected;
+    uint32_t buttons; /* left 1, right 2, middle 4, side 8 and 16 */
+    int32_t x, y;     /* movement since the last sample, down positive */
+    int32_t wheel, tilt;
+    uint8_t reserved[8];
+} MouseData;
+QEMU_BUILD_BUG_ON(sizeof(MouseData) != 40);
+int sceMouseInit(void);
+int sceMouseOpen(int32_t user_id, int32_t type, int32_t index,
+                 const MouseOpenParam *param);
+int sceMouseRead(int32_t handle, MouseData *data, int32_t num);
+int sceMouseClose(int32_t handle);
+
+static struct {
+    bool wanted, inited, connected;
+    int init_rc, open_rc, logged_rc;
+    int32_t handle;
+    uint32_t buttons;
+    /* For the game log, since its last line */
+    int samples, failures, last_rc;
+    int64_t moved;
+    uint32_t pressed;
+} g_mouse = { .handle = -1, .logged_rc = 1 };
+
+static bool mouse_imports_ok(void)
+{
+    return xemu_ps5_import_ok("sceMouseInit") &&
+           xemu_ps5_import_ok("sceMouseOpen") &&
+           xemu_ps5_import_ok("sceMouseRead");
+}
+
+/* From xemu_input_ps5_pads_scan (every 2 s, the UI thread). */
+static void mouse_scan(void)
+{
+    if (!g_mouse.wanted || g_mouse.handle >= 0 || g_players[0].user < 0 ||
+        !mouse_imports_ok()) {
+        return;
+    }
+    if (!g_mouse.inited) {
+        g_mouse.init_rc = sceMouseInit();
+        g_mouse.inited = true;
+        fprintf(stderr, "xemu PS5 mouse: init %#x\n", g_mouse.init_rc);
+    }
+    MouseOpenParam merged = { .behavior = 1 };
+    int rc = sceMouseOpen(g_players[0].user, 0, 0, &merged);
+    if (rc < 0) {
+        rc = sceMouseOpen(g_players[0].user, 0, 0, NULL);
+    }
+    g_mouse.open_rc = rc;
+    if (rc >= 0) {
+        g_mouse.handle = rc;
+        fprintf(stderr, "xemu PS5 mouse: open for user %d: handle %d\n",
+                g_players[0].user, rc);
+    } else if (rc != g_mouse.logged_rc) {
+        g_mouse.logged_rc = rc;
+        fprintf(stderr, "xemu PS5 mouse: open for user %d: %#x\n",
+                g_players[0].user, rc);
+    }
+}
+
+bool xemu_ps5_mouse_poll(int *dx, int *dy, uint32_t *buttons)
+{
+    *dx = *dy = 0;
+    *buttons = 0;
+    g_mouse.wanted = true;
+    if (g_mouse.handle < 0) {
+        return false;
+    }
+    MouseData d[32];
+    int n = sceMouseRead(g_mouse.handle, d, ARRAY_SIZE(d));
+    if (n < 0) {
+        g_mouse.failures++;
+        g_mouse.last_rc = n;
+        return false;
+    }
+    for (int i = 0; i < n; i++) {
+        *dx += d[i].x;
+        *dy += d[i].y;
+        g_mouse.buttons = d[i].buttons;
+        g_mouse.pressed |= d[i].buttons;
+        if (d[i].connected != g_mouse.connected) {
+            g_mouse.connected = d[i].connected;
+            fprintf(stderr, "xemu PS5 mouse: %s\n",
+                    g_mouse.connected ? "connected" : "disconnected");
+        }
+    }
+    g_mouse.samples += n;
+    g_mouse.moved += abs(*dx) + abs(*dy);
+    /* The samples count whatever their connected flag says (merged mode may
+     * leave it unset); with no mouse they don't move or press anything. */
+    if (g_xemu_ps5_pad_hold) {
+        /* The dashboard is up: the game gets nothing */
+        *dx = *dy = 0;
+        return true;
+    }
+    *buttons = g_mouse.buttons;
+    return true;
+}
+
+/* The game log's line, once a gun game has asked for the mouse. */
+void xemu_ps5_mouse_format(char *buf, size_t size)
+{
+    buf[0] = '\0';
+    if (!g_mouse.wanted) {
+        return;
+    }
+    if (!mouse_imports_ok()) {
+        snprintf(buf, size, "the console left libSceMouse unresolved");
+    } else if (g_mouse.handle < 0) {
+        snprintf(buf, size, "not open (init %#x, open %#x)", g_mouse.init_rc,
+                 g_mouse.open_rc);
+    } else {
+        int n = snprintf(buf, size,
+                         "handle %d, %s, %d samples, moved %" PRId64
+                         " counts, buttons seen %#x",
+                         g_mouse.handle,
+                         g_mouse.connected ? "connected" : "not connected",
+                         g_mouse.samples, g_mouse.moved, g_mouse.pressed);
+        if (g_mouse.failures && n > 0 && (size_t)n < size) {
+            snprintf(buf + n, size - n, ", %d reads failed (last %#x)",
+                     g_mouse.failures, g_mouse.last_rc);
+        }
+    }
+    g_mouse.samples = g_mouse.failures = 0;
+    g_mouse.moved = 0;
+    g_mouse.pressed = 0;
 }
 
 void xemu_input_update_ps5_pad_state(ControllerState *state)

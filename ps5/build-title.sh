@@ -92,6 +92,11 @@ stub() {
 }
 stub libSceAgc vendor/ps5/sdk/stubs/agc_canary_link_stub.c
 stub libSceAgcDriver vendor/ps5/sdk/stubs/agc_driver_canary_link_stub.c
+# XPSemu Chihiro: the mouse library (the gun games' aim), which the payload
+# SDK has no stub for; its soname as the SDK names its own (libScePad.sprx).
+cc -std=c11 -O2 -fPIC -c "$here/stubs/libSceMouse_stub.c" -o "$work/obj/libSceMouse_stub.o"
+"$sdk_root/bin/prospero-lld" --shared -soname "libSceMouse.sprx" \
+    -o "$work/stubs/libSceMouse.so" "$work/obj/libSceMouse_stub.o"
 
 # shellcheck source=/dev/null
 source "$vk/tools/radv-link.sh"
@@ -130,11 +135,13 @@ radv_link_flags+=(--version-script "$work/libc-missing-local.map")
     "$work/obj/app_crt.o" "$work/obj/app_cpp_runtime.o" \
     --start-group "${xemu_inputs[@]}" --end-group \
     "$work/stubs/libSceAgc.so" "$work/stubs/libSceAgcDriver.so" \
+    "$work/stubs/libSceMouse.so" \
     "${radv_link_inputs[@]}" \
     --as-needed "$sdk_root"/target/lib/*.so
 "$tool" link --in "$work/llvm-pie.elf" --out "$work/eboot.elf" \
     --stub-dir "$sdk_root/target/lib" --stub "$work/stubs/libSceAgc.so" \
-    --stub "$work/stubs/libSceAgcDriver.so" --module-sdk "$module_sdk" \
+    --stub "$work/stubs/libSceAgcDriver.so" \
+    --stub "$work/stubs/libSceMouse.so" --module-sdk "$module_sdk" \
     --companion-sdk "$companion_sdk" --file-name eboot.elf
 
 app=$src/dist/$title_id
