@@ -873,6 +873,10 @@ static const char kEnvTemplate[] =
     "XEMU_CHIHIRO_AIM_SPEED=100\n"
     "XEMU_CHIHIRO_CROSSHAIR=1\n"
     "#\n"
+    "# The pipeline cache is written to disk every this many frames (600 is\n"
+    "# about 10 s; 0 = only when a game ends)\n"
+    "XEMU_PCACHE_SAVE_FLIPS=600\n"
+    "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
     "#XEMU_CHIHIRO_LOG=boot\n";
 

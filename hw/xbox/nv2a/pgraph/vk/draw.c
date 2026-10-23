@@ -242,14 +242,18 @@ static void pcache_save_now(PGRAPHVkState *r)
     if (!g_config.perf.cache_shaders) {
         return; /* XPSemu: perf.cache_shaders off, nothing kept on disk */
     }
+    /* XPSemu Chihiro: timed (XT_PCACHE, and the saved line) */
+    uint64_t xt_pcache = xemu_timing_now();
     if (vkGetPipelineCacheData(r->device, r->vk_pipeline_cache, &pc_len,
                                NULL) != VK_SUCCESS ||
         !pc_len || pc_len == r->pcache_saved_len) {
+        xemu_timing_add(XT_PCACHE, xt_pcache);
         return;
     }
     void *pc_blob = g_malloc(pc_len);
     if (vkGetPipelineCacheData(r->device, r->vk_pipeline_cache, &pc_len,
                                pc_blob) == VK_SUCCESS) {
+        uint64_t xt_read = xemu_timing_now();
         /* XPSemu: the app's cache folder, whole or not at all */
         char *pc_path = pipeline_cache_path();
         char *tmp = g_strdup_printf("%s.tmp", pc_path);
@@ -257,8 +261,11 @@ static void pcache_save_now(PGRAPHVkState *r)
         g_mkdir_with_parents(dir, 0777);
         if (g_file_set_contents(tmp, pc_blob, pc_len, NULL)) {
             rename(tmp, pc_path);
-            fprintf(stderr, "XPSemu: pipeline cache saved (%zu KiB)\n",
-                    pc_len >> 10);
+            uint64_t xt_end = xemu_timing_now();
+            fprintf(stderr, "XPSemu: pipeline cache saved (%zu KiB: read "
+                    "from the driver %.0f ms, written %.0f ms)\n",
+                    pc_len >> 10, (xt_read - xt_pcache) / 1e6,
+                    (xt_end - xt_read) / 1e6);
         }
         g_free(dir);
         g_free(tmp);
@@ -266,6 +273,7 @@ static void pcache_save_now(PGRAPHVkState *r)
         r->pcache_saved_len = pc_len;
     }
     g_free(pc_blob);
+    xemu_timing_add(XT_PCACHE, xt_pcache);
 }
 
 static void *pcache_save_thread(void *arg)
@@ -2673,6 +2681,7 @@ void pgraph_vk_finish(PGRAPHState *pg, FinishReason finish_reason)
         uint64_t xt_submit = xemu_timing_now();
         /* XPSemu: the Vulkan UI submits to the same queue */
         qemu_mutex_lock(&r->queue_lock);
+        xemu_timing_add(XT_SUBMIT_LOCK, xt_submit);
         VK_CHECK(vkQueueSubmit(r->queue, ARRAY_SIZE(submit_infos), submit_infos,
                                r->slot_fence[r->slot]));
         qemu_mutex_unlock(&r->queue_lock);

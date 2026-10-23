@@ -105,6 +105,9 @@ static void profile_frame_times(int *c)
         { XT_CPU_IDLE, NV2A_PROF_CPU_IDLE_US },
         { XT_TB_GEN, NV2A_PROF_TB_GEN_US },
         { XT_UI_FRAME, NV2A_PROF_UI_FRAME_US },
+        { XT_SUBMIT_LOCK, NV2A_PROF_SUBMIT_LOCK_US },
+        { XT_UI_QUEUE, NV2A_PROF_UI_QUEUE_US },
+        { XT_PCACHE, NV2A_PROF_PCACHE_US },
     };
     static uint64_t last[ARRAY_SIZE(map)];
     for (size_t i = 0; i < ARRAY_SIZE(map); i++) {
