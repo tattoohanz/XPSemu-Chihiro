@@ -278,6 +278,9 @@ void GameLogStart(const GameLogInfo &info)
          "gun game, "
          "the mouse (open or why not, samples read, counts moved, buttons "
          "seen)\n"
+         "  the Xbox CPU thread's time in devices: ms per second and thousands "
+         "of accesses per second, in all and by memory region (the 8 "
+         "costliest), and its waits for the machine lock (BQL)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -540,6 +543,12 @@ void GameLogTick()
     if (char *trace = an2131_sc_trace_take()) {
         Write(std::string("           ") + trace);
         free(trace);
+    }
+    /* XPSemu: the Xbox CPU thread in devices and waiting for the lock */
+    xemu_mmio_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           CPU thread in devices: ") + diag +
+              "\n");
     }
     /* XPSemu Chihiro: the gun games' mouse */
     xemu_ps5_mouse_format(diag, sizeof(diag));

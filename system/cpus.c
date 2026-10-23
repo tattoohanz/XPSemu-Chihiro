@@ -47,6 +47,7 @@
 #include "hw/boards.h"
 #include "hw/hw.h"
 #include "trace.h"
+#include "hw/xbox/xemu-timing.h"
 
 #ifdef CONFIG_LINUX
 
@@ -575,7 +576,14 @@ void bql_lock_impl(const char *file, int line)
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
 
     g_assert(!bql_locked());
+    /* XPSemu: the Xbox CPU thread's waits for this lock (log only) */
+    uint64_t xt0 = current_cpu ? xemu_tsc() : 0;
     bql_lock_fn(&bql, file, line);
+    if (xt0) {
+        __atomic_fetch_add(&xemu_bql_wait_tsc, xemu_tsc() - xt0,
+                           __ATOMIC_RELAXED);
+        __atomic_fetch_add(&xemu_bql_wait_n, 1, __ATOMIC_RELAXED);
+    }
 }
 
 void bql_unlock(void)
