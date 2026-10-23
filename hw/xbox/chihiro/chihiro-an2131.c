@@ -548,7 +548,19 @@ static void an2131_sfr_write(Cpu8051State *cpu, uint8_t addr, uint8_t val)
             s->card_ti_cycles[1] = s->total_cycles | 1;
             return;
         }
-        cpu->sfr[0xC0 - 0x80] |= 0x02;  /* set TI1 — byte "sent" */
+        if (!s->is_qc &&
+            chihiro_cabinet_drive_board() == CHIHIRO_DRIVE_SEGA838) {
+            /* XPSemu Chihiro: TI1 once the byte is out on the MIDI line
+             * (card_rx_deliver), as for the card readers' UARTs. Raised at
+             * once, OutRun 2's SC firmware sent the board its old commands
+             * over and over: with the logs off, 11 sends from the game in
+             * 5 s (0x23, at most 16 bytes each) and 25,000 bytes on the
+             * line, resets and SET_MODEs among them; their status 1 is the
+             * ENCODER ALARM. */
+            s->card_ti_cycles[1] = s->total_cycles | 1;
+        } else {
+            cpu->sfr[0xC0 - 0x80] |= 0x02;  /* set TI1 — byte "sent" */
+        }
 
         if (!s->is_qc) {
             /* SC: plain MIDI to whatever board this cabinet carries */
@@ -1470,6 +1482,9 @@ static void midi_rx_deliver(AN2131State *s)
 /* HEURISTIC: the delay from an SBUF write to TI (33 us; a byte at 115200 baud
  * would take about 520 cycles). */
 #define CARD_TI_CYCLES         200
+/* XPSemu Chihiro: a byte on the MIDI line, 10 bits at 31250 baud (320 us),
+ * at the 8051's 6 M cycles a second. */
+#define MIDI_TI_CYCLES         1920
 
 /* A byte from a card reader lands in a SC UART: SBUF, the even parity in RB8
  * (the 9-bit mode's ninth bit), RI, and the serial interrupt looked at again. */
@@ -1564,20 +1579,23 @@ static void card_rx_deliver(AN2131State *s)
 {
     if (s->is_qc)
         return;
-    bool mt = chihiro_crp1231_enabled;
-    if (!mt && (!chihiro_hw210_enabled || !chihiro_card_reader_global))
-        return;
     /* Deferred TX-complete: raise TI CARD_TI_CYCLES after the SBUF write,
-     * as the silicon raises it once the byte is out. */
+     * as the silicon raises it once the byte is out; UART1 to a drive board
+     * (no card reader there) after a MIDI byte. */
     for (int i = 0; i < 2; i++) {
+        uint64_t need = i == 1 && !chihiro_hw210_enabled ? MIDI_TI_CYCLES :
+                                                          CARD_TI_CYCLES;
         if (s->card_ti_cycles[i] &&
-            s->total_cycles - s->card_ti_cycles[i] >= CARD_TI_CYCLES) {
+            s->total_cycles - s->card_ti_cycles[i] >= need) {
             s->cpu.events++;
             s->cpu.sfr[(i == 0 ? 0x98 : 0xC0) - 0x80] |= 0x02;
             s->cpu.irq_recheck = true;
             s->card_ti_cycles[i] = 0;
         }
     }
+    bool mt = chihiro_crp1231_enabled;
+    if (!mt && (!chihiro_hw210_enabled || !chihiro_card_reader_global))
+        return;
     /* Hold delivery while a card-drain vendor request (0x1A/0x1B) is still
      * being serviced (reply not yet armed): a serial RX interrupt in the
      * middle of the drain/feeder copy clobbers shared firmware work

@@ -18,6 +18,7 @@
  */
 #include "qemu/osdep.h"
 #include "qemu/atomic.h"
+#include "qemu/timer.h"
 #include "chihiro-driveboard-sega838.h"
 #include "chihiro-cabinet.h"
 
@@ -28,6 +29,14 @@ DriveBoardState *chihiro_driveboard_global = NULL;
  * the packages it played. */
 static uint32_t diag_cmds[128];
 static uint32_t diag_play_max;
+/* ...and how long a package took to reach the DualSense (log only): from
+ * the 0xFB that started it (host time) to the UI frame that first played a
+ * step with power, and to the one that played its strongest step. */
+static int64_t diag_fb_ms;      /* the package waiting to be felt, 0 none */
+static uint8_t diag_fb_peak;    /* its strongest step's power */
+static bool diag_fb_felt;       /* its first step with power has played */
+static uint32_t diag_fb_plays, diag_first_n, diag_peak_n;
+static int64_t diag_first_sum, diag_first_max, diag_peak_sum, diag_peak_max;
 
 static void driveboard_push_response(DriveBoardState *db, uint8_t val)
 {
@@ -152,11 +161,19 @@ void driveboard_receive_byte(DriveBoardState *db, uint8_t byte)
         db->play_pkg = (int8_t)(p2 & 0x0F);
         db->play_pos = 0;
         db->play_sub = 0;
+        uint8_t peak = 0;
         for (int i = 0; i < 16; i++) {
             uint32_t pw = db->sud_pkg[db->play_pkg][i] & 0x7F;
             if (pw > qatomic_read(&diag_play_max)) {
                 qatomic_set(&diag_play_max, pw);
             }
+            peak = MAX(peak, pw);
+        }
+        if (peak) {
+            diag_fb_peak = peak;
+            diag_fb_felt = false;
+            qatomic_set(&diag_fb_ms, qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
+            qatomic_inc(&diag_fb_plays);
         }
         driveboard_push_response(db, 0x00);
         break;
@@ -251,6 +268,23 @@ void driveboard_get_ffb(DriveBoardState *db, DriveBoardFFB *out)
     }
     db->event_pulse = power;   /* package pulse -> gamepad rumble */
 
+    int64_t fb_ms = qatomic_read(&diag_fb_ms);
+    if (fb_ms && power) {
+        int64_t took = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - fb_ms;
+        if (!diag_fb_felt) {
+            diag_fb_felt = true;
+            diag_first_n++;
+            diag_first_sum += took;
+            diag_first_max = MAX(diag_first_max, took);
+        }
+        if (power >= diag_fb_peak) {
+            diag_peak_n++;
+            diag_peak_sum += took;
+            diag_peak_max = MAX(diag_peak_max, took);
+            qatomic_cmpxchg(&diag_fb_ms, fb_ms, 0);
+        }
+    }
+
     /* Per A.Geezer the SUD packages are OR2's real tactile feedback. */
     out->event_power = power;  /* this frame's package movement */
     out->event_dir = dir;
@@ -285,6 +319,18 @@ void driveboard_diag_format(char *buf, size_t size)
     }
     uint32_t pm = qatomic_xchg(&diag_play_max, 0);
     if (pm && n < size) {
-        snprintf(buf + n, size - n, "; packages up to %02X", pm);
+        n += snprintf(buf + n, size - n, "; packages up to %02X", pm);
     }
+    uint32_t plays = qatomic_xchg(&diag_fb_plays, 0);
+    if (plays && n < size) {
+        snprintf(buf + n, size - n, "; to the DualSense: %u packages, first "
+                 "step after %.0f ms (worst %lld), strongest after %.0f ms "
+                 "(worst %lld)", plays,
+                 diag_first_n ? (double)diag_first_sum / diag_first_n : 0.0,
+                 (long long)diag_first_max,
+                 diag_peak_n ? (double)diag_peak_sum / diag_peak_n : 0.0,
+                 (long long)diag_peak_max);
+    }
+    diag_first_n = diag_peak_n = 0;
+    diag_first_sum = diag_first_max = diag_peak_sum = diag_peak_max = 0;
 }
