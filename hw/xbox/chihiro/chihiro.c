@@ -376,8 +376,13 @@ static uint32_t chihiro_flash_rom_size;
 static uint16_t mediaboard_net_firmware_version(void)
 {
     const char *path = g_config.chihiro.roms.net_firmware_path;
-    if (!path || !path[0])
+    if (!path || !path[0]) {
+        /* XPSemu Chihiro: said, so a missing setting shows in the log */
+        fprintf(stderr, "Chihiro: no network firmware named "
+                "(chihiro.roms.net_firmware_path), the board reports %X.%02X\n",
+                MB_FIRM_VERSION_DEFAULT >> 8, MB_FIRM_VERSION_DEFAULT & 0xFF);
         return MB_FIRM_VERSION_DEFAULT;
+    }
 
     gchar *img = NULL;
     gsize len = 0;
