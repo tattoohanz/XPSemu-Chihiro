@@ -323,5 +323,7 @@ void an2131_ep_out_write(AN2131State *s, int ep_nr,
                          const uint8_t *data, int len);
 
 int  an2131_run(AN2131State *s, int max_cycles);
+/* XPSemu Chihiro: the game log's "SC 8051" line since the last call. */
+void an2131_sc_diag_format(char *buf, size_t size);
 
 #endif /* CHIHIRO_AN2131_H */

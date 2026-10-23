@@ -905,9 +905,69 @@ static void an2131_set_cpucs(AN2131State *s, uint8_t val)
     }
 }
 
+/* XPSemu Chihiro: what the SC's 8051 costs the machine (log only, the game
+ * log's "SC 8051" line): the host's control requests by bRequest (each runs
+ * the firmware until it answers, up to a cap), and the other runs (endpoint
+ * polls and writes), with their wall time and 8051 cycles. Read and cleared
+ * by an2131_sc_diag_format. */
+static struct {
+    uint32_t req[256], reqs, capped, runs;
+    uint64_t req_ns, req_cyc, run_ns, run_cyc;
+} sc_diag;
+
+static int an2131_setup_packet_inner(AN2131State *s, const uint8_t setup[8],
+                                     const uint8_t *out_data, int out_len,
+                                     uint8_t *resp_buf, int resp_max);
+
 int an2131_setup_packet(AN2131State *s, const uint8_t setup[8],
                         const uint8_t *out_data, int out_len,
                         uint8_t *resp_buf, int resp_max)
+{
+    if (s->is_qc) {
+        return an2131_setup_packet_inner(s, setup, out_data, out_len,
+                                         resp_buf, resp_max);
+    }
+    int64_t t0 = get_clock();
+    uint64_t c0 = s->total_cycles;
+    int r = an2131_setup_packet_inner(s, setup, out_data, out_len, resp_buf,
+                                      resp_max);
+    uint64_t c = s->total_cycles - c0;
+    sc_diag.req[setup[1]]++;
+    sc_diag.reqs++;
+    sc_diag.capped += c >= 100000;
+    sc_diag.req_cyc += c;
+    sc_diag.req_ns += get_clock() - t0;
+    return r;
+}
+
+void an2131_sc_diag_format(char *buf, size_t size)
+{
+    buf[0] = '\0';
+    if (!sc_diag.reqs && !sc_diag.runs) {
+        return;
+    }
+    int n = snprintf(buf, size, "requests %u (", sc_diag.reqs);
+    bool first = true;
+    for (int i = 0; i < 256 && n > 0 && (size_t)n < size; i++) {
+        if (sc_diag.req[i]) {
+            n += snprintf(buf + n, size - n, "%s%02X:%u", first ? "" : " ", i,
+                          sc_diag.req[i]);
+            first = false;
+        }
+    }
+    if (n > 0 && (size_t)n < size) {
+        snprintf(buf + n, size - n,
+                 ") %.0f ms, %.0f k cycles, %u at the cap | other runs %u "
+                 "%.0f ms, %.0f k cycles",
+                 sc_diag.req_ns / 1e6, sc_diag.req_cyc / 1e3, sc_diag.capped,
+                 sc_diag.runs, sc_diag.run_ns / 1e6, sc_diag.run_cyc / 1e3);
+    }
+    memset(&sc_diag, 0, sizeof(sc_diag));
+}
+
+static int an2131_setup_packet_inner(AN2131State *s, const uint8_t setup[8],
+                                     const uint8_t *out_data, int out_len,
+                                     uint8_t *resp_buf, int resp_max)
 {
     if (!s->cpu_running) return -1;
 
@@ -1577,6 +1637,7 @@ int an2131_run(AN2131State *s, int max_cycles)
 {
     if (!s->cpu_running) return 0;
 
+    int64_t diag_t0 = s->is_qc ? 0 : get_clock(); /* XPSemu Chihiro */
     int64_t probe_t0 = unlikely(xemu_tbrate_enabled()) ? get_clock() : 0;
     int total = 0, skipped = 0;
     /* A turn is only trusted if it ran whole within this call. */
@@ -1614,6 +1675,11 @@ int an2131_run(AN2131State *s, int max_cycles)
     }
     if (probe_t0) {
         an2131_probe_account(probe_t0, total, max_cycles, skipped);
+    }
+    if (diag_t0) {
+        sc_diag.runs++;
+        sc_diag.run_cyc += total;
+        sc_diag.run_ns += get_clock() - diag_t0;
     }
     return total;
 }
