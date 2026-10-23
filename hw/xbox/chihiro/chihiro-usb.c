@@ -652,6 +652,7 @@ static void handle_data(USBDevice *dev, USBPacket *p)
                 uint8_t buf[64];
                 int got = an2131_ep_in_read(&s->an2131, ep, buf, MIN((int)p->iov.size, (int)sizeof(buf)));
                 if (got > 0) {
+                    an2131_sc_trace(&s->an2131, 'I', ep, buf, got);
                     if (lpc_log_verbose && !s->is_qc && (ep == 1 || ep == 2)) {
                         fprintf(stderr, "[%lld] SC BULK EP%d IN: %d bytes:", TS_MS, ep, got);
                         for (int i = 0; i < got && i < 32; i++)
@@ -672,10 +673,12 @@ static void handle_data(USBDevice *dev, USBPacket *p)
              * OUTnBC). Overwriting the buffer instead corrupts multi-chunk
              * frames — the card WRITE command in particular. */
             if (s->an2131.ep[ep].cs_out & EPCS_BSY) {
+                an2131_sc_trace(&s->an2131, 'B', ep, NULL, chunk);
                 p->status = USB_RET_NAK;
                 return;
             }
             usb_packet_copy(p, buf, chunk);
+            an2131_sc_trace(&s->an2131, 'O', ep, buf, chunk);
             if (!s->is_qc) {
                 CHIHIRO_LOG_HEX(USB, buf, MIN(chunk, 32),
                                 "%s BULK EP%d OUT: %d bytes:", id, ep, chunk);

@@ -325,5 +325,11 @@ void an2131_ep_out_write(AN2131State *s, int ep_nr,
 int  an2131_run(AN2131State *s, int max_cycles);
 /* XPSemu Chihiro: the game log's "SC 8051" line since the last call. */
 void an2131_sc_diag_format(char *buf, size_t size);
+/* XPSemu Chihiro: an SC bulk transfer for the drive board exchange trace
+ * (kind 'O' host OUT, 'B' OUT refused busy, 'I' host IN), and the trace's
+ * next block for the game log (malloc'd text, or NULL). */
+void an2131_sc_trace(AN2131State *s, char kind, int ep, const uint8_t *data,
+                     int len);
+char *an2131_sc_trace_take(void);
 
 #endif /* CHIHIRO_AN2131_H */

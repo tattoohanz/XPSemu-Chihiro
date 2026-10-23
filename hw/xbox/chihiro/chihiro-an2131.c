@@ -26,6 +26,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/timer.h"
+#include "qemu/thread.h"
 #include "system/cpus.h"
 #include "chihiro-an2131.h"
 #include "chihiro-jvs.h"
@@ -42,6 +43,9 @@
 
 /* SC UART1 reaches whichever board the cabinet hangs off it. */
 static void    midi_peer_send(uint8_t val);
+static void    sct_record(uint8_t kind, uint8_t ep, uint8_t flags,
+                          const uint8_t *data, int len, uint16_t pc,
+                          uint16_t value, uint16_t index);
 static bool    midi_peer_has_response(void);
 static uint8_t midi_peer_get_response(void);
 
@@ -549,6 +553,7 @@ static void an2131_sfr_write(Cpu8051State *cpu, uint8_t addr, uint8_t val)
         if (!s->is_qc) {
             /* SC: plain MIDI to whatever board this cabinet carries */
             CHIHIRO_LOGF(FFB, "SC UART1 TX %02X\n", val);
+            sct_record('T', 1, 0, &val, 1, 0, 0, 0);
             midi_peer_send(val);
             if (!s->midi_response_ready && midi_peer_has_response()) {
                 s->midi_response_ready = true;
@@ -919,6 +924,206 @@ static int an2131_setup_packet_inner(AN2131State *s, const uint8_t setup[8],
                                      const uint8_t *out_data, int out_len,
                                      uint8_t *resp_buf, int resp_max);
 
+/* XPSemu Chihiro: the SC's exchange with the host and the drive board, kept
+ * in memory (log only, the game log's "drive board exchange" blocks): the
+ * host's control requests and bulk transfers, and the bytes on the MIDI line
+ * each way, at their virtual time. XEMU_CHIHIRO_LOG=ffb prints them as they
+ * happen, which slows the line enough to change what the game does. Two
+ * kinds of block: the first exchange, from just before the first byte to
+ * the board, and the last one before the board went quiet (up to 3). */
+typedef struct {
+    int64_t t_us, t_last_us; /* virtual time; t_last_us of the last repeat */
+    uint32_t repeat;         /* the same event this many more times */
+    uint16_t pc, value, index;
+    uint8_t kind;            /* see sct_line */
+    uint8_t ep;              /* endpoint, bRequest for a control request */
+    uint8_t flags;           /* control: 1 IN, 2 ran to the cycle cap */
+    uint8_t len;
+    uint8_t data[16];
+} ScTraceEvent;
+
+#define SCT_RING 2048
+#define SCT_DUMP 700
+#define SCT_QUIET_US 3000000
+static QemuSpin sct_lock;
+static ScTraceEvent sct_ring[SCT_RING];
+static uint32_t sct_count; /* events in the ring ever (index: % SCT_RING) */
+static ScTraceEvent sct_first[SCT_DUMP];
+static uint32_t sct_first_n;
+static bool sct_first_on, sct_first_given;
+static int64_t sct_last_tx_us;
+static bool sct_quiet_armed;
+static int sct_quiet_dumps;
+
+static bool sct_same(const ScTraceEvent *a, const ScTraceEvent *b)
+{
+    return a->kind == b->kind && a->ep == b->ep && a->flags == b->flags &&
+           a->len == b->len && a->value == b->value && a->index == b->index &&
+           !memcmp(a->data, b->data, MIN(a->len, sizeof(a->data)));
+}
+
+/* Appends e, or counts it as a repeat of the event before (not for the
+ * bytes on the line, where every byte counts). */
+static void sct_put(ScTraceEvent *arr, uint32_t *n, uint32_t cap, bool ring,
+                    const ScTraceEvent *e)
+{
+    if (*n && e->kind != 'T' && e->kind != 'R') {
+        ScTraceEvent *p = &arr[(*n - 1) % cap];
+        if (sct_same(p, e)) {
+            p->repeat++;
+            p->t_last_us = e->t_us;
+            return;
+        }
+    }
+    if (!ring && *n >= cap) {
+        return;
+    }
+    arr[*n % cap] = *e;
+    (*n)++;
+}
+
+static void sct_record(uint8_t kind, uint8_t ep, uint8_t flags,
+                       const uint8_t *data, int len, uint16_t pc,
+                       uint16_t value, uint16_t index)
+{
+    if (chihiro_cabinet_drive_board() == CHIHIRO_DRIVE_NONE) {
+        return;
+    }
+    ScTraceEvent e = {
+        .t_us = qemu_clock_get_us(QEMU_CLOCK_VIRTUAL),
+        .pc = pc, .value = value, .index = index,
+        .kind = kind, .ep = ep, .flags = flags,
+        .len = len < 0 ? 0 : len > 255 ? 255 : len,
+    };
+    e.t_last_us = e.t_us;
+    if (data && e.len) {
+        memcpy(e.data, data, MIN(e.len, sizeof(e.data)));
+    }
+    qemu_spin_lock(&sct_lock);
+    if (kind == 'T') {
+        sct_last_tx_us = e.t_us;
+        sct_quiet_armed = true;
+        if (!sct_first_on && !sct_first_given) {
+            /* The first byte to the board: from 30 events before it. */
+            sct_first_on = true;
+            uint32_t back = MIN(sct_count, 30);
+            for (uint32_t i = sct_count - back; i < sct_count; i++) {
+                sct_first[sct_first_n++] = sct_ring[i % SCT_RING];
+            }
+        }
+    }
+    sct_put(sct_ring, &sct_count, SCT_RING, true, &e);
+    if (sct_first_on) {
+        sct_put(sct_first, &sct_first_n, SCT_DUMP, false, &e);
+    }
+    qemu_spin_unlock(&sct_lock);
+}
+
+void an2131_sc_trace(AN2131State *s, char kind, int ep, const uint8_t *data,
+                     int len)
+{
+    if (!s->is_qc) {
+        sct_record(kind, ep, 0, data, len, 0, 0, 0);
+    }
+}
+
+static void sct_print(GString *out, const ScTraceEvent *ev, uint32_t n)
+{
+    int64_t t0 = n ? ev[0].t_us : 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const ScTraceEvent *e = &ev[i];
+        g_string_append_printf(out, "             %+9.3f ms  ",
+                               (e->t_us - t0) / 1000.0);
+        int shown = MIN(e->len, (int)sizeof(e->data));
+        switch (e->kind) {
+        case 'T':
+        case 'R': {
+            /* A run of bytes the same way on one line. */
+            g_string_append(out, e->kind == 'T' ? "to the board:" :
+                                                  "from the board:");
+            uint32_t j = i;
+            while (j < n && ev[j].kind == e->kind && j - i < 8) {
+                g_string_append_printf(out, " %02X", ev[j].data[0]);
+                j++;
+            }
+            i = j - 1;
+            g_string_append_c(out, '\n');
+            continue;
+        }
+        case 'C':
+            g_string_append_printf(out, "control %02X %s value %04X index "
+                                   "%04X, %d bytes:", e->ep,
+                                   e->flags & 1 ? "in" : "out", e->value,
+                                   e->index, e->len);
+            break;
+        case 'O':
+            g_string_append_printf(out, "host OUT ep%d, %d bytes:", e->ep,
+                                   e->len);
+            break;
+        case 'B':
+            g_string_append_printf(out, "host OUT ep%d refused (busy), %d "
+                                   "bytes:", e->ep, e->len);
+            break;
+        case 'I':
+            g_string_append_printf(out, "host IN ep%d, %d bytes:", e->ep,
+                                   e->len);
+            break;
+        default:
+            g_string_append_printf(out, "%c ep%d:", e->kind, e->ep);
+            break;
+        }
+        for (int k = 0; k < shown; k++) {
+            g_string_append_printf(out, " %02X", e->data[k]);
+        }
+        if (e->len > shown) {
+            g_string_append(out, " ..");
+        }
+        if (e->flags & 2) {
+            g_string_append_printf(out, " (ran to the cap, PC %04X)", e->pc);
+        }
+        if (e->repeat) {
+            g_string_append_printf(out, " x%u more, to %+.3f ms", e->repeat,
+                                   (e->t_last_us - t0) / 1000.0);
+        }
+        g_string_append_c(out, '\n');
+    }
+}
+
+char *an2131_sc_trace_take(void)
+{
+    static ScTraceEvent snap[SCT_DUMP];
+    uint32_t n = 0;
+    const char *what = NULL;
+    int64_t now = qemu_clock_get_us(QEMU_CLOCK_VIRTUAL);
+
+    qemu_spin_lock(&sct_lock);
+    if (sct_first_on && !sct_first_given && sct_first_n >= SCT_DUMP) {
+        n = sct_first_n;
+        memcpy(snap, sct_first, n * sizeof(*snap));
+        sct_first_given = true;
+        sct_first_on = false;
+        what = "the first";
+    } else if (sct_quiet_armed && sct_quiet_dumps < 3 &&
+               now - sct_last_tx_us > SCT_QUIET_US) {
+        n = MIN(sct_count, SCT_DUMP);
+        for (uint32_t i = 0; i < n; i++) {
+            snap[i] = sct_ring[(sct_count - n + i) % SCT_RING];
+        }
+        sct_quiet_armed = false;
+        sct_quiet_dumps++;
+        what = "the last before the board went quiet";
+    }
+    qemu_spin_unlock(&sct_lock);
+    if (!what) {
+        return NULL;
+    }
+    GString *out = g_string_new(NULL);
+    g_string_append_printf(out, "drive board exchange, %s (%u events, Xbox "
+                           "time):\n", what, n);
+    sct_print(out, snap, n);
+    return g_string_free(out, false);
+}
+
 int an2131_setup_packet(AN2131State *s, const uint8_t setup[8],
                         const uint8_t *out_data, int out_len,
                         uint8_t *resp_buf, int resp_max)
@@ -937,6 +1142,10 @@ int an2131_setup_packet(AN2131State *s, const uint8_t setup[8],
     sc_diag.capped += c >= 100000;
     sc_diag.req_cyc += c;
     sc_diag.req_ns += get_clock() - t0;
+    bool in = setup[0] & 0x80;
+    sct_record('C', setup[1], (in ? 1 : 0) | (c >= 100000 ? 2 : 0),
+               in ? resp_buf : out_data, in ? r : out_len, s->cpu.pc,
+               setup[2] | setup[3] << 8, setup[4] | setup[5] << 8);
     return r;
 }
 
@@ -1241,6 +1450,7 @@ static void midi_rx_deliver(AN2131State *s)
 
     uint8_t byte = midi_peer_get_response();
     CHIHIRO_LOGF(FFB, "SC UART1 RX %02X\n", byte);
+    sct_record('R', 1, 0, &byte, 1, 0, 0, 0);
     cpu->events++;
     cpu->sfr[0xC1 - 0x80] = byte;
     cpu->sfr[0xC0 - 0x80] |= 0x01;  /* set RI1 */

@@ -49,6 +49,7 @@ extern "C" void xemu_ps5_pad_vibration_format(char *buf, size_t size);
 extern "C" void driveboard_diag_format(char *buf, size_t size);
 extern "C" void xemu_ps5_mouse_format(char *buf, size_t size);
 extern "C" void an2131_sc_diag_format(char *buf, size_t size);
+extern "C" char *an2131_sc_trace_take(void);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -264,7 +265,10 @@ void GameLogStart(const GameLogInfo &info)
          "the commands the game sent it (wire byte:count); the SC board's "
          "8051 (the host's control requests by bRequest:count, the wall ms "
          "and 8051 cycles they took and how many ran to the cycle cap, and "
-         "its other runs); in a gun game, "
+         "its other runs); with a drive board, its exchange with the host "
+         "(control requests, bulk transfers, the bytes on the line each way) "
+         "once from its first byte and once each time it goes quiet; in a "
+         "gun game, "
          "the mouse (open or why not, samples read, counts moved, buttons "
          "seen)\n"
          "  and a third: milliseconds per second (and times) the emulator "
@@ -519,6 +523,11 @@ void GameLogTick()
     an2131_sc_diag_format(diag, sizeof(diag));
     if (diag[0]) {
         Write(std::string("           SC 8051: ") + diag + "\n");
+    }
+    /* XPSemu Chihiro: the drive board's exchange, kept in memory */
+    if (char *trace = an2131_sc_trace_take()) {
+        Write(std::string("           ") + trace);
+        free(trace);
     }
     /* XPSemu Chihiro: the gun games' mouse */
     xemu_ps5_mouse_format(diag, sizeof(diag));
