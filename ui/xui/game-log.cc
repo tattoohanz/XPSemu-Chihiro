@@ -48,6 +48,7 @@ extern "C" void pgraph_vk_diag_tex_format(char *buf, size_t size);
 extern "C" void xemu_ps5_pad_vibration_format(char *buf, size_t size);
 extern "C" void driveboard_diag_format(char *buf, size_t size);
 extern "C" void xemu_ps5_mouse_format(char *buf, size_t size);
+extern "C" void an2131_sc_diag_format(char *buf, size_t size);
 #endif
 
 static int g_fd = -1;     // The game's log
@@ -260,7 +261,10 @@ void GameLogStart(const GameLogInfo &info)
          "memory (why the surface there could not serve); the drive board's "
          "force feedback on the DualSense (motor sends, strongest level, "
          "failures) and, on a Sega 838 cabinet, the drive board's state and "
-         "the commands the game sent it (wire byte:count); in a gun game, "
+         "the commands the game sent it (wire byte:count); the SC board's "
+         "8051 (the host's control requests by bRequest:count, the wall ms "
+         "and 8051 cycles they took and how many ran to the cycle cap, and "
+         "its other runs); in a gun game, "
          "the mouse (open or why not, samples read, counts moved, buttons "
          "seen)\n"
          "  and a third: milliseconds per second (and times) the emulator "
@@ -509,6 +513,12 @@ void GameLogTick()
     driveboard_diag_format(diag, sizeof(diag));
     if (diag[0]) {
         Write(std::string("           drive board: ") + diag + "\n");
+    }
+    /* XPSemu Chihiro: what the SC board's 8051 cost (control requests,
+     * other runs) */
+    an2131_sc_diag_format(diag, sizeof(diag));
+    if (diag[0]) {
+        Write(std::string("           SC 8051: ") + diag + "\n");
     }
     /* XPSemu Chihiro: the gun games' mouse */
     xemu_ps5_mouse_format(diag, sizeof(diag));
