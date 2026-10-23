@@ -62,6 +62,26 @@ void pgraph_vk_draw_begin(NV2AState *d)
 
     pgraph_vk_surface_update(d, true, true, depth_test || stencil_test);
 
+    /* XPSemu Chihiro (log only): the first use of a color or zeta surface
+     * that took over its address from the other kind. */
+    {
+        PGRAPHVkState *rv = pg->vk_renderer_state;
+        if (rv->color_binding && (rv->color_binding->diag_view & 1) &&
+            color_write) {
+            bool reads = (pgraph_reg_r(pg, NV_PGRAPH_BLEND) &
+                          NV_PGRAPH_BLEND_EN) ||
+                         !(mask_alpha && mask_red && mask_green && mask_blue);
+            pgraph_vk_view_first_use(rv->color_binding,
+                                     reads ? PGRAPH_VK_VIEW_DRAW_READ :
+                                             PGRAPH_VK_VIEW_DRAW_WRITE);
+        }
+        if (rv->zeta_binding && (rv->zeta_binding->diag_view & 1) &&
+            (depth_test || stencil_test)) {
+            pgraph_vk_view_first_use(rv->zeta_binding,
+                                     PGRAPH_VK_VIEW_DRAW_READ);
+        }
+    }
+
     if (is_nop_draw) {
         NV2A_VK_DPRINTF("nop!");
         return;
@@ -3767,6 +3787,27 @@ void pgraph_vk_clear_surface(NV2AState *d, uint32_t parameter)
     unsigned int xmax = GET_MASK(clearrectx, NV_PGRAPH_CLEARRECTX_XMAX);
     unsigned int ymin = GET_MASK(clearrecty, NV_PGRAPH_CLEARRECTY_YMIN);
     unsigned int ymax = GET_MASK(clearrecty, NV_PGRAPH_CLEARRECTY_YMAX);
+
+    /* XPSemu Chihiro (log only): see pgraph_vk_view_first_use */
+    {
+        bool whole = xmin == 0 && ymin == 0 && xmax + 1 >= binding->width &&
+                     ymax + 1 >= binding->height;
+        bool all_color = (parameter & NV097_CLEAR_SURFACE_COLOR) ==
+                         NV097_CLEAR_SURFACE_COLOR;
+        if (write_color) {
+            pgraph_vk_view_first_use(r->color_binding,
+                                     whole && all_color ?
+                                         PGRAPH_VK_VIEW_CLEAR_FULL :
+                                         PGRAPH_VK_VIEW_CLEAR_PART);
+        }
+        if (write_zeta) {
+            pgraph_vk_view_first_use(r->zeta_binding,
+                                     whole && (parameter &
+                                               NV097_CLEAR_SURFACE_Z) ?
+                                         PGRAPH_VK_VIEW_CLEAR_FULL :
+                                         PGRAPH_VK_VIEW_CLEAR_PART);
+        }
+    }
 
     NV2A_VK_DGROUP_BEGIN("CLEAR min=(%d,%d) max=(%d,%d)%s%s", xmin, ymin, xmax,
                          ymax, write_color ? " color" : "",

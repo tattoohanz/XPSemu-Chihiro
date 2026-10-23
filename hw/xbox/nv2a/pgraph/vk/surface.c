@@ -596,9 +596,43 @@ void pgraph_vk_cpu_touch_format(char *buf, size_t size)
     buf[0] = 0;
 }
 
+/* XPSemu Chihiro: a color and a zeta surface at one address taking turns
+ * (log only). Each turn evicts the one bound (its content downloaded) and
+ * creates the other (RAM uploaded into it); counted here is whether the new
+ * one's first use needed that content. */
+static uint32_t view_to_color, view_to_zeta, view_both;
+static uint32_t view_use[PGRAPH_VK_VIEW__COUNT];
+
+void pgraph_vk_view_first_use(SurfaceBinding *s, int use)
+{
+    if (!s || !(s->diag_view & 1)) {
+        return;
+    }
+    s->diag_view &= ~1;
+    qatomic_inc(&view_use[use]);
+}
+
 void pgraph_vk_reshape_format(char *buf, size_t size)
 {
+    uint32_t to_color = qatomic_xchg(&view_to_color, 0);
+    uint32_t to_zeta = qatomic_xchg(&view_to_zeta, 0);
+    uint32_t both = qatomic_xchg(&view_both, 0);
+    uint32_t u[PGRAPH_VK_VIEW__COUNT];
+    for (int i = 0; i < PGRAPH_VK_VIEW__COUNT; i++) {
+        u[i] = qatomic_xchg(&view_use[i], 0);
+    }
     buf[0] = 0;
+    if (!to_color && !to_zeta) {
+        return;
+    }
+    snprintf(buf, size, "color and zeta at one address took turns %u times "
+             "(to color %u, to zeta %u, both bound at once %u); the new one "
+             "first: fully cleared %u, partly cleared %u, drawn reading it "
+             "%u, drawn over %u, evicted unused %u",
+             to_color + to_zeta, to_color, to_zeta, both,
+             u[PGRAPH_VK_VIEW_CLEAR_FULL], u[PGRAPH_VK_VIEW_CLEAR_PART],
+             u[PGRAPH_VK_VIEW_DRAW_READ], u[PGRAPH_VK_VIEW_DRAW_WRITE],
+             u[PGRAPH_VK_VIEW_UNUSED]);
 }
 
 void pgraph_vk_diag_blit_format(char *buf, size_t size)
@@ -869,6 +903,7 @@ static void invalidate_surface(NV2AState *d, SurfaceBinding *surface)
     PGRAPHVkState *r = d->pgraph.vk_renderer_state;
 
     trace_nv2a_pgraph_surface_invalidated(surface->vram_addr);
+    pgraph_vk_view_first_use(surface, PGRAPH_VK_VIEW_UNUSED);
 
     /* The trash keeps an image the open recording used alive, and a recycled
      * image is drawn after those draws, on the same queue. */
@@ -1907,12 +1942,14 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
         unbind_surface(d, color);
 
         SurfaceBinding *surface = pgraph_vk_surface_get(d, target.vram_addr);
+        uint8_t view = 0; /* XPSemu Chihiro (log only), see diag_view */
         if (surface != NULL) {
             // FIXME: Support same color/zeta surface target? In the mean time,
             // if the surface we just found is currently bound, just unbind it.
             SurfaceBinding *other = (color ? r->zeta_binding
                                            : r->color_binding);
             if (surface == other) {
+                view |= 2;
                 NV2A_UNIMPLEMENTED("Same color & zeta surface offset");
                 unbind_surface(d, !color);
             }
@@ -1993,6 +2030,17 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
+                if (surface->color != target.color &&
+                    surface->vram_addr == target.vram_addr &&
+                    surface->pitch == target.pitch &&
+                    surface->width == target.width &&
+                    surface->height == target.height) {
+                    view |= 1;
+                    qatomic_inc(target.color ? &view_to_color : &view_to_zeta);
+                    if (view & 2) {
+                        qatomic_inc(&view_both);
+                    }
+                }
                 PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_INCOMPAT,
                                    evict_surface(d, surface));
             }
@@ -2032,6 +2080,7 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 create_surface_image(pg, &target);
             }
 
+            target.diag_view = (view & 1) ? view : 0;
             *surface = target;
             set_surface_label(pg, surface);
             surface_put(d, surface);
