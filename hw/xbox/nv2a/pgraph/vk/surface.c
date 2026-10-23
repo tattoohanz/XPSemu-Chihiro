@@ -498,19 +498,88 @@ static void download_surface_to_buffer(NV2AState *d, SurfaceBinding *surface,
 }
 
 /* XPSemu Chihiro: surface downloads by cause, for the game log (log only).
- * In this renderer only the Xbox CPU's accesses and vertex data are told
- * apart; the rest counts as "other". The other diagnostic lines of the
- * game log have nothing to report here. */
+ * Every download site sets its cause; "other" is one that does not. The
+ * other diagnostic lines of the game log have nothing to report here. */
 int pgraph_vk_dl_cause = PGRAPH_VK_DL_OTHER;
 static uint32_t pgraph_vk_dl_count[PGRAPH_VK_DL__COUNT];
+static const char *const pgraph_vk_dl_names[PGRAPH_VK_DL__COUNT] = {
+    "other", "CPU", "CPU depth read (not waited for)", "sync",
+    "blit source", "blit destination", "texture",
+    "vertices", "overlap", "other shape", "old", "flush",
+    "owed, for a new surface", "owed, before its image went",
+};
+PGRAPHVkDlFor pgraph_vk_dl_for;
+
+/* The surfaces downloaded, by cause and shape (log only): the first
+ * DL_SLOTS distinct ones of a game-log window, the rest counted. */
+#define DL_SLOTS 10
+static QemuSpin dl_lock;
+static struct {
+    char key[200];
+    uint32_t n;
+} dl_slot[DL_SLOTS];
+static uint32_t dl_more;
+
+static void dl_note(const SurfaceBinding *s)
+{
+    char key[200];
+    int n = snprintf(key, sizeof(key), "%s: %s %08" HWADDR_PRIx " %ux%u "
+                     "pitch %u fmt %u%s", pgraph_vk_dl_names[pgraph_vk_dl_cause],
+                     s->color ? "color" : "zeta", s->vram_addr, s->width,
+                     s->height, s->pitch,
+                     s->color ? s->shape.color_format : s->shape.zeta_format,
+                     s->swizzle ? " swizzled" : "");
+    const PGRAPHVkDlFor *f = &pgraph_vk_dl_for;
+    if (f->len && n > 0 && (size_t)n < sizeof(key)) {
+        if (f->texture) {
+            snprintf(key + n, sizeof(key) - n, " for a texture at %08"
+                     HWADDR_PRIx " fmt %u %ux%u pitch %u levels %u%s%s",
+                     f->start, f->fmt, f->width, f->height, f->pitch,
+                     f->levels, f->cubemap ? " cube" : "",
+                     f->surface_there ? " (surface there, not usable)" : "");
+        } else {
+            snprintf(key + n, sizeof(key) - n, " for vertices at %08"
+                     HWADDR_PRIx " (%zu bytes)", f->start, f->len);
+        }
+    }
+    qemu_spin_lock(&dl_lock);
+    int i;
+    for (i = 0; i < DL_SLOTS && dl_slot[i].n; i++) {
+        if (!strcmp(dl_slot[i].key, key)) {
+            break;
+        }
+    }
+    if (i == DL_SLOTS) {
+        dl_more++;
+    } else {
+        if (!dl_slot[i].n) {
+            memcpy(dl_slot[i].key, key, sizeof(key));
+        }
+        dl_slot[i].n++;
+    }
+    qemu_spin_unlock(&dl_lock);
+}
+
+void pgraph_vk_dl_surfaces_format(char *buf, size_t size)
+{
+    size_t len = 0;
+    buf[0] = 0;
+    qemu_spin_lock(&dl_lock);
+    for (int i = 0; i < DL_SLOTS && dl_slot[i].n && len < size; i++) {
+        len += snprintf(buf + len, size - len, "%s%s x%u", len ? "; " : "",
+                        dl_slot[i].key, dl_slot[i].n);
+    }
+    if (dl_more && len < size) {
+        snprintf(buf + len, size - len, "; others %u", dl_more);
+    }
+    memset(dl_slot, 0, sizeof(dl_slot));
+    dl_more = 0;
+    qemu_spin_unlock(&dl_lock);
+}
 
 void pgraph_vk_dl_causes_format(char *buf, size_t size)
 {
-    static const char *const names[PGRAPH_VK_DL__COUNT] = {
-        "other", "CPU", "CPU depth read (not waited for)", "sync",
-        "blit source", "blit destination", "texture",
-        "vertices", "overlap", "other shape", "old", "flush",
-    };
+    const char *const *names = pgraph_vk_dl_names;
     size_t len = 0;
     buf[0] = 0;
     for (int i = 0; i < PGRAPH_VK_DL__COUNT && len < size; i++) {
@@ -552,6 +621,7 @@ static void download_surface(NV2AState *d, SurfaceBinding *surface, bool force)
     // FIXME: Respect write enable at last TOU?
 
     qatomic_inc(&pgraph_vk_dl_count[pgraph_vk_dl_cause]);
+    dl_note(surface);
     uint64_t xt_download = xemu_timing_now();
     download_surface_to_buffer(d, surface, d->vram_ptr + surface->vram_addr);
     xemu_timing_add(XT_DOWNLOAD, xt_download);
@@ -610,6 +680,8 @@ void pgraph_vk_process_pending_downloads(NV2AState *d)
 void pgraph_vk_download_dirty_surfaces(NV2AState *d)
 {
     PGRAPHVkState *r = d->pgraph.vk_renderer_state;
+    int dl_saved = pgraph_vk_dl_cause;
+    pgraph_vk_dl_cause = PGRAPH_VK_DL_SYNC;
 
     SurfaceBinding *surface;
     QTAILQ_FOREACH(surface, &r->surfaces, entry) {
@@ -623,6 +695,7 @@ void pgraph_vk_download_dirty_surfaces(NV2AState *d)
         }
     }
 
+    pgraph_vk_dl_cause = dl_saved;
     qatomic_set(&r->download_dirty_surfaces_pending, false);
     qemu_event_set(&r->dirty_surfaces_download_complete);
 }
@@ -907,7 +980,7 @@ static bool parked_settle_for_create(NV2AState *d, SurfaceBinding *neu)
         latest->swizzle != neu->swizzle) {
         return false; /* no owed content, or layout-incompatible (dead) */
     }
-    parked_materialize(d, latest);
+    PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_CREATE, parked_materialize(d, latest));
     pgraph_writeback_learn_live(&d->pgraph, latest->vram_addr, latest->size);
     return true;
 }
@@ -940,7 +1013,8 @@ static void invalidate_overlapping_surfaces(NV2AState *d,
             trace_nv2a_pgraph_surface_evict_overlapping(
                 other_surface->vram_addr, other_surface->width,
                 other_surface->height, other_surface->pitch);
-            evict_surface(d, other_surface);
+            PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_OVERLAP,
+                               evict_surface(d, other_surface));
         }
     }
 }
@@ -1167,7 +1241,8 @@ get_any_compatible_invalid_surface(PGRAPHVkState *r, SurfaceBinding *target)
                     surface->size == target->size) {
                     parked_owed_settled(g_nv2a, surface);
                 } else {
-                    parked_materialize(g_nv2a, surface);
+                    PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_PRUNE,
+                                       parked_materialize(g_nv2a, surface));
                 }
             }
             /* In-place sampling: a recycled image must hand its new
@@ -1192,7 +1267,8 @@ static void prune_invalid_surfaces(PGRAPHVkState *r, int keep)
         if (num_surfaces > keep) {
             /* Never destroy owed content silently. */
             if (surface->writeback_owed) {
-                parked_materialize(g_nv2a, surface);
+                PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_PRUNE,
+                                   parked_materialize(g_nv2a, surface));
             }
             QTAILQ_REMOVE(&r->invalid_surfaces, surface, entry);
             destroy_surface_image(r, surface);
@@ -1210,7 +1286,8 @@ static void expire_old_surfaces(NV2AState *d)
         int last_used = d->pgraph.frame_time - s->frame_time;
         if (last_used >= max_surface_frame_time_delta) {
             trace_nv2a_pgraph_surface_evict_reason("old", s->vram_addr);
-            pgraph_vk_surface_download_if_dirty(d, s);
+            PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_OLD,
+                               pgraph_vk_surface_download_if_dirty(d, s));
             invalidate_surface(d, s);
         }
     }
@@ -1916,7 +1993,8 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", surface->vram_addr);
                 compare_surfaces(surface, &target);
-                evict_surface(d, surface);
+                PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_INCOMPAT,
+                                   evict_surface(d, surface));
             }
         }
 
@@ -2213,7 +2291,8 @@ void pgraph_vk_surface_flush(NV2AState *d)
     QTAILQ_FOREACH_SAFE(s, &r->surfaces, entry, next) {
         // FIXME: We should download all surfaces to ram, but need to
         //        investigate corruption issue
-        pgraph_vk_surface_download_if_dirty(d, s);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_FLUSH,
+                           pgraph_vk_surface_download_if_dirty(d, s));
         invalidate_surface(d, s);
     }
     /* After a snapshot load or a reset RAM is authoritative: an owed

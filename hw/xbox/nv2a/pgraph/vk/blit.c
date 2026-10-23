@@ -214,7 +214,8 @@ void pgraph_vk_image_blit(NV2AState *d)
     }
 
     if (surf_src) {
-        pgraph_vk_surface_download_if_dirty(d, surf_src);
+        PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_BLIT_SRC,
+                           pgraph_vk_surface_download_if_dirty(d, surf_src));
     }
 
     hwaddr source_offset = image_blit->in_y * context_surfaces->source_pitch +
@@ -251,7 +252,8 @@ void pgraph_vk_image_blit(NV2AState *d)
     if (surf_dest) {
         if (adjusted_height < surf_dest->height ||
             row_pixels < surf_dest->width) {
-            pgraph_vk_surface_download_if_dirty(d, surf_dest);
+            PGRAPH_VK_DL_CAUSE(PGRAPH_VK_DL_BLIT_DST,
+                               pgraph_vk_surface_download_if_dirty(d, surf_dest));
         } else {
             // The blit will completely replace the surface so any pending
             // download should be discarded.
