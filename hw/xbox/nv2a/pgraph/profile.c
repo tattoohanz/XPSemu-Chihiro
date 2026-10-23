@@ -19,6 +19,8 @@
 
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/xemu-timing.h"
+#include "hw/core/cpu.h"
+#include "qemu/xemu-cost.h"
 
 NV2AStats g_nv2a_stats;
 
@@ -28,79 +30,151 @@ uint64_t xemu_timing_max_ns[XT__COUNT];
 uint32_t xemu_inval_page[XEMU_INVAL_PAGES];
 uint32_t xemu_inval_hits[XEMU_INVAL_PAGES];
 uint32_t xemu_timing_count[XT__COUNT];
-XemuMmioSlot xemu_mmio_slot[XEMU_MMIO_SLOTS];
-uint64_t xemu_mmio_more_tsc, xemu_bql_wait_tsc;
-uint32_t xemu_mmio_more_n, xemu_bql_wait_n;
+XemuCostSlot xemu_mmio_slot[XEMU_MMIO_SLOTS];
+XemuCostSlot xemu_hold_slot[XEMU_HOLD_SLOTS];
+XemuCostSlot xemu_timer_slot[XEMU_CB_SLOTS];
+XemuCostSlot xemu_bh_slot[XEMU_CB_SLOTS];
+uint64_t xemu_bql_wait_tsc;
+uint32_t xemu_bql_wait_n;
 
 typedef struct {
+    const void *key;
     const char *name;
-    uint64_t tsc;
+    int line;
+    uint64_t tsc, max;
     uint32_t n;
-} MmioRow;
+} CostRow;
 
-static int mmio_row_cmp(const void *a, const void *b)
+static int cost_row_cmp(const void *a, const void *b)
 {
-    const MmioRow *x = a, *y = b;
+    const CostRow *x = a, *y = b;
     return x->tsc < y->tsc ? 1 : x->tsc > y->tsc ? -1 : 0;
 }
 
-void xemu_mmio_format(char *buf, size_t size)
+/* Rows taken out of a table (cleared), the costliest first. */
+static int cost_take(XemuCostSlot *t, unsigned nslots, CostRow *rows)
 {
-    static uint64_t last_tsc, last_ns;
-    uint64_t tsc = xemu_tsc(), ns = xemu_timing_now();
-    MmioRow rows[XEMU_MMIO_SLOTS + 1];
-    int nrows = 0;
-    for (int i = 0; i < XEMU_MMIO_SLOTS; i++) {
-        XemuMmioSlot *s = &xemu_mmio_slot[i];
-        if (!__atomic_load_n(&s->mr, __ATOMIC_ACQUIRE)) {
+    int n = 0;
+    for (unsigned i = 0; i < nslots; i++) {
+        XemuCostSlot *s = &t[i];
+        const void *key = __atomic_load_n(&s->key, __ATOMIC_ACQUIRE);
+        if (!key) {
             continue;
         }
-        uint32_t n = __atomic_exchange_n(&s->n, 0, __ATOMIC_RELAXED);
-        uint64_t t = __atomic_exchange_n(&s->tsc, 0, __ATOMIC_RELAXED);
-        if (n) {
-            rows[nrows++] = (MmioRow){ s->name ? s->name : "?", t, n };
+        uint32_t c = __atomic_exchange_n(&s->n, 0, __ATOMIC_RELAXED);
+        uint64_t tsc = __atomic_exchange_n(&s->tsc, 0, __ATOMIC_RELAXED);
+        uint64_t max = __atomic_exchange_n(&s->max, 0, __ATOMIC_RELAXED);
+        if (c) {
+            rows[n++] = (CostRow){ key, s->name, s->line, tsc, max, c };
         }
     }
-    uint32_t more_n = __atomic_exchange_n(&xemu_mmio_more_n, 0,
-                                          __ATOMIC_RELAXED);
-    uint64_t more_t = __atomic_exchange_n(&xemu_mmio_more_tsc, 0,
-                                          __ATOMIC_RELAXED);
-    if (more_n) {
-        rows[nrows++] = (MmioRow){ "others", more_t, more_n };
+    qsort(rows, n, sizeof(rows[0]), cost_row_cmp);
+    return n;
+}
+
+/* A callback named by its distance from this function: look it up in the
+ * build's llvm-pie.elf at xemu_cost_format's address plus the offset. */
+static void cost_name(char *buf, size_t size, const CostRow *r, int kind)
+{
+    if (kind == 0) {
+        snprintf(buf, size, "%s", r->name ? r->name : "?");
+    } else if (kind == 1) {
+        const char *f = r->name ? r->name : "?";
+        const char *slash = strrchr(f, '/');
+        snprintf(buf, size, "%s:%d", slash ? slash + 1 : f, r->line);
+    } else {
+        snprintf(buf, size, "fn%+lld",
+                 (long long)((intptr_t)r->key -
+                             (intptr_t)(void *)xemu_cost_format));
     }
-    uint32_t lock_n = __atomic_exchange_n(&xemu_bql_wait_n, 0,
-                                          __ATOMIC_RELAXED);
-    uint64_t lock_t = __atomic_exchange_n(&xemu_bql_wait_tsc, 0,
-                                          __ATOMIC_RELAXED);
-    buf[0] = 0;
+}
+
+static size_t cost_list(char *buf, size_t size, size_t len, CostRow *rows,
+                        int n, int kind, int top, double ms_per_tsc,
+                        double secs)
+{
+    for (int i = 0; i < n && i < top && len < size; i++) {
+        char name[96];
+        cost_name(name, sizeof(name), &rows[i], kind);
+        len += snprintf(buf + len, size - len,
+                        "%s %s %.1f (%.1f k, longest %.2f ms)",
+                        i ? "," : "", name, rows[i].tsc * ms_per_tsc / secs,
+                        rows[i].n / secs / 1e3, rows[i].max * ms_per_tsc);
+    }
+    return len;
+}
+
+/* Timers and bottom halves run by any thread but the Xbox CPU's. */
+static void cb_cost(int kind, const void *cb, uint64_t tsc)
+{
+    if (current_cpu) {
+        return;
+    }
+    xemu_cost_note(kind == XEMU_COST_TIMER ? xemu_timer_slot : xemu_bh_slot,
+                   XEMU_CB_SLOTS, cb, NULL, -1, tsc);
+}
+
+void xemu_cost_format(char *mmio, size_t mmio_size, char *hold,
+                      size_t hold_size, char *loop, size_t loop_size)
+{
+    static uint64_t last_tsc, last_ns;
+    qatomic_set(&xemu_cb_cost_hook, cb_cost);
+    static CostRow rows[XEMU_MMIO_SLOTS];
+    uint64_t tsc = xemu_tsc(), ns = xemu_timing_now();
     uint64_t dtsc = tsc - last_tsc, dns = ns - last_ns;
     bool first = !last_tsc;
     last_tsc = tsc;
     last_ns = ns;
-    if (first || !dtsc || !dns) {
-        return; /* The TSC's rate comes from two calls */
+    mmio[0] = hold[0] = loop[0] = 0;
+
+    uint32_t lock_n = __atomic_exchange_n(&xemu_bql_wait_n, 0,
+                                          __ATOMIC_RELAXED);
+    uint64_t lock_t = __atomic_exchange_n(&xemu_bql_wait_tsc, 0,
+                                          __ATOMIC_RELAXED);
+    if (first || !dtsc || !dns) { /* The TSC's rate comes from two calls */
+        cost_take(xemu_mmio_slot, XEMU_MMIO_SLOTS, rows);
+        cost_take(xemu_hold_slot, XEMU_HOLD_SLOTS, rows);
+        cost_take(xemu_timer_slot, XEMU_CB_SLOTS, rows);
+        cost_take(xemu_bh_slot, XEMU_CB_SLOTS, rows);
+        return;
     }
     double ms_per_tsc = (double)dns / dtsc / 1e6;
     double secs = dns / 1e9;
-    qsort(rows, nrows, sizeof(rows[0]), mmio_row_cmp);
+
+    int n = cost_take(xemu_mmio_slot, XEMU_MMIO_SLOTS, rows);
     uint64_t all_t = 0;
     uint32_t all_n = 0;
-    for (int i = 0; i < nrows; i++) {
+    for (int i = 0; i < n; i++) {
         all_t += rows[i].tsc;
         all_n += rows[i].n;
     }
-    size_t len = snprintf(buf, size, "%.0f ms/s in %.0f k accesses/s",
+    size_t len = snprintf(mmio, mmio_size, "%.0f ms/s in %.0f k accesses/s:",
                           all_t * ms_per_tsc / secs, all_n / secs / 1e3);
-    for (int i = 0; i < nrows && i < 8 && len < size; i++) {
-        len += snprintf(buf + len, size - len, "%s %s %.1f (%.1f k)",
-                        i ? "," : ":", rows[i].name,
-                        rows[i].tsc * ms_per_tsc / secs,
-                        rows[i].n / secs / 1e3);
+    len = cost_list(mmio, mmio_size, len, rows, n, 0, 8, ms_per_tsc, secs);
+    if (len < mmio_size) {
+        snprintf(mmio + len, mmio_size - len, " | waiting for the machine "
+                 "lock %.0f ms/s (%.0f k times/s)",
+                 lock_t * ms_per_tsc / secs, lock_n / secs / 1e3);
     }
-    if (len < size) {
-        snprintf(buf + len, size - len, " | waiting for the machine lock "
-                 "%.0f ms/s (%.0f times/s)", lock_t * ms_per_tsc / secs,
-                 lock_n / secs);
+
+    n = cost_take(xemu_hold_slot, XEMU_HOLD_SLOTS, rows);
+    len = 0;
+    if (n) {
+        len = cost_list(hold, hold_size, 0, rows, n, 1, 6, ms_per_tsc, secs);
+    }
+
+    n = cost_take(xemu_timer_slot, XEMU_CB_SLOTS, rows);
+    len = 0;
+    if (n) {
+        len = snprintf(loop, loop_size, "timers");
+        len = cost_list(loop, loop_size, len, rows, n, 2, 6, ms_per_tsc,
+                        secs);
+    }
+    n = cost_take(xemu_bh_slot, XEMU_CB_SLOTS, rows);
+    if (n && len < loop_size) {
+        len += snprintf(loop + len, loop_size - len, "%sbottom halves",
+                        len ? " | " : "");
+        cost_list(loop, loop_size, len, rows, n, 2, 4, ms_per_tsc, secs);
     }
 }
 

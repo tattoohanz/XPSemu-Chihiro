@@ -280,7 +280,10 @@ void GameLogStart(const GameLogInfo &info)
          "seen)\n"
          "  the Xbox CPU thread's time in devices: ms per second and thousands "
          "of accesses per second, in all and by memory region (the 8 "
-         "costliest), and its waits for the machine lock (BQL)\n"
+         "costliest, with the longest one), and its waits for the machine "
+         "lock (BQL); the other threads' holds of that lock by the code "
+         "that took it; and the timer and bottom-half callbacks run off the "
+         "CPU thread (fn+offset: from xemu_cost_format in the build)\n"
          "  and a third: milliseconds per second (and times) the emulator "
          "spent on each step: the GPU thread submitting work to the PS5 GPU "
          "and waiting for it, waiting for one-off jobs, copying surfaces "
@@ -545,10 +548,22 @@ void GameLogTick()
         free(trace);
     }
     /* XPSemu: the Xbox CPU thread in devices and waiting for the lock */
-    xemu_mmio_format(diag, sizeof(diag));
-    if (diag[0]) {
-        Write(std::string("           CPU thread in devices: ") + diag +
-              "\n");
+    {
+        char hold[1024], loop[1024];
+        xemu_cost_format(diag, sizeof(diag), hold, sizeof(hold), loop,
+                         sizeof(loop));
+        if (diag[0]) {
+            Write(std::string("           CPU thread in devices: ") + diag +
+                  "\n");
+        }
+        if (hold[0]) {
+            Write(std::string("           machine lock held by other "
+                              "threads: ") + hold + "\n");
+        }
+        if (loop[0]) {
+            Write(std::string("           callbacks off the CPU thread: ") +
+                  loop + "\n");
+        }
     }
     /* XPSemu Chihiro: the gun games' mouse */
     xemu_ps5_mouse_format(diag, sizeof(diag));

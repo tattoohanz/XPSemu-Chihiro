@@ -571,6 +571,31 @@ void rust_bql_mock_lock(void)
  * The BQL is taken from so many places that it is worth profiling the
  * callers directly, instead of funneling them all through a single function.
  */
+/* XPSemu: the BQL held by threads other than the Xbox CPU's, by the site
+ * that took it (log only, the game log's "machine lock held" line). */
+static __thread uint64_t xemu_hold_t0;
+static __thread const char *xemu_hold_file;
+static __thread int xemu_hold_line;
+
+static void xemu_hold_begin(const char *file, int line)
+{
+    if (!current_cpu) {
+        xemu_hold_t0 = xemu_tsc();
+        xemu_hold_file = file;
+        xemu_hold_line = line;
+    }
+}
+
+static void xemu_hold_end(void)
+{
+    if (xemu_hold_t0) {
+        xemu_cost_note(xemu_hold_slot, XEMU_HOLD_SLOTS, xemu_hold_file,
+                       xemu_hold_file, xemu_hold_line,
+                       xemu_tsc() - xemu_hold_t0);
+        xemu_hold_t0 = 0;
+    }
+}
+
 void bql_lock_impl(const char *file, int line)
 {
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
@@ -584,23 +609,39 @@ void bql_lock_impl(const char *file, int line)
                            __ATOMIC_RELAXED);
         __atomic_fetch_add(&xemu_bql_wait_n, 1, __ATOMIC_RELAXED);
     }
+    xemu_hold_begin(file, line);
 }
 
 void bql_unlock(void)
 {
     g_assert(bql_locked());
     g_assert(!bql_unlock_blocked);
+    xemu_hold_end();
     qemu_mutex_unlock(&bql);
 }
 
 void qemu_cond_wait_bql(QemuCond *cond)
 {
+    const char *file = xemu_hold_file;
+    int line = xemu_hold_line;
+    bool held = xemu_hold_t0;
+    xemu_hold_end();
     qemu_cond_wait(cond, &bql);
+    if (held) {
+        xemu_hold_begin(file, line);
+    }
 }
 
 void qemu_cond_timedwait_bql(QemuCond *cond, int ms)
 {
+    const char *file = xemu_hold_file;
+    int line = xemu_hold_line;
+    bool held = xemu_hold_t0;
+    xemu_hold_end();
     qemu_cond_timedwait(cond, &bql, ms);
+    if (held) {
+        xemu_hold_begin(file, line);
+    }
 }
 
 /* signal CPU creation */

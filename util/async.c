@@ -24,6 +24,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/xemu-cost.h"
 #include "qapi/error.h"
 #include "block/aio.h"
 #include "block/thread-pool.h"
@@ -169,7 +170,15 @@ void aio_bh_call(QEMUBH *bh)
         reentrancy_guard->engaged_in_io = true;
     }
 
+    /* XPSemu: timed for the game log (log only) */
+    void (*hook)(int, const void *, uint64_t) =
+        qatomic_read(&xemu_cb_cost_hook);
+    QEMUBHFunc *cb = bh->cb; /* the callback may free the bh */
+    uint64_t xt0 = hook ? xemu_cost_tsc() : 0;
     bh->cb(bh->opaque);
+    if (hook) {
+        hook(XEMU_COST_BH, (const void *)cb, xemu_cost_tsc() - xt0);
+    }
 
     if (reentrancy_guard) {
         reentrancy_guard->engaged_in_io = last_engaged_in_io;

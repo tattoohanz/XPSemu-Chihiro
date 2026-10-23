@@ -1489,7 +1489,9 @@ MemTxResult memory_region_dispatch_read(MemoryRegion *mr,
     r = memory_region_dispatch_read1(mr, addr, pval, size, attrs);
     adjust_endianness(mr, pval, op);
     if (xt0) {
-        xemu_mmio_note(mr, mr->name, xemu_tsc() - xt0);
+        xemu_mmio_note(mr, mr->name ? mr->name :
+                       mr->owner ? object_get_typename(mr->owner) : "?",
+                       xemu_tsc() - xt0);
     }
     return r;
 }
@@ -1567,7 +1569,9 @@ MemTxResult memory_region_dispatch_write(MemoryRegion *mr,
                                       mr, attrs);
     }
     if (xt0) {
-        xemu_mmio_note(mr, mr->name, xemu_tsc() - xt0);
+        xemu_mmio_note(mr, mr->name ? mr->name :
+                       mr->owner ? object_get_typename(mr->owner) : "?",
+                       xemu_tsc() - xt0);
     }
     return r;
 }
