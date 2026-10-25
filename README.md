@@ -25,8 +25,8 @@ OutRun 2 and Ollie King. Some scenes still run below 60 FPS.
   time), rendered cubemaps and plain image blits are copied on the GPU instead of through RAM, Xbox CPU
   reads of a depth buffer take the last readback, a larger depth buffer serves a smaller color
   target.
-- **Cabinet controls on the DualSense** (coin on D-pad up) and the drive board's force feedback
-  as rumble, see
+- **Cabinet controls on the DualSense** (coin on D-pad up), each game's on its own page of the
+  game select (D-pad down), and the drive board's force feedback as rumble, see
   [`ps5/README-CHIHIRO.md`](ps5/README-CHIHIRO.md).
 
 ### Install

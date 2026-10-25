@@ -158,6 +158,12 @@ protected:
                   bool options);
     void PadCapture();
     void DrawPadPage(float s, float a);
+    // XPSemu Chihiro: the selected game's controls (D-pad down on the
+    // arcade front). Kept while the page slides away after Back.
+    bool m_controls_page = false;
+    int ControlsProfile(const Game &game);
+    void ControlsLog();
+    void DrawControlsPage(float s, float a);
     // Home screen shortcuts: this game's (its folder, or ""), and the
     // disc to start at once when XPSemu runs as one.
     std::string m_gs_shortcut, m_autolaunch;

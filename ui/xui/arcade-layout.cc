@@ -157,10 +157,11 @@ void Ground(const Ctx &c, const ArcadeFrame &f)
 }
 
 // A D-pad with one arm lit (0 up, 1 right, 2 down, 3 left), as the
-// buttons in P-ras's own help: grey, the one to press red.
-void DPad(const Ctx &c, float cx, float cy, int lit)
+// buttons in P-ras's own help: grey, the one to press red; k times the
+// help's size.
+void DPad(const Ctx &c, float cx, float cy, int lit, float k = 1)
 {
-    const float arm = 15, half = 9;
+    const float arm = 15 * k, half = 9 * k;
     ImU32 grey = Col(c, 213, 210, 219), red = Col(c, 230, 76, 60);
     ImU32 edge = Col(c, 16, 85, 101);
     // The cross, outlined
@@ -205,11 +206,12 @@ void Help(const Ctx &c)
 }
 
 // Small boxes at the bottom left, as P-ras's: this game's settings, the
-// emulator's settings.
+// emulator's settings, this game's controls.
 void Corner(const Ctx &c)
 {
     struct Box { const char *glyph, *label; };
-    static const Box boxes[] = { { "tri", "GAME" }, { "opt", "SETTINGS" } };
+    static const Box boxes[] = { { "tri", "GAME" }, { "opt", "SETTINGS" },
+                                 { "down", "CONTROLS" } };
     float x = 16;
     for (const auto &b : boxes) {
         float lw = Measure(c, 22, b.label).x;
@@ -223,6 +225,8 @@ void Corner(const Ctx &c)
             c.dl->AddTriangle(P(c, gx, gy - 10), P(c, gx + 11, gy + 9),
                               P(c, gx - 11, gy + 9), Col(c, 255, 255, 255),
                               2.5f * c.s);
+        } else if (!strcmp(b.glyph, "down")) {
+            DPad(c, gx, gy, 2, 0.62f); // D-pad down
         } else {
             for (int i = -1; i <= 1; i++) {
                 c.dl->AddLine(P(c, gx - 10, gy + i * 7), P(c, gx + 10, gy + i * 7),

@@ -10,8 +10,12 @@
  *   Driving games (Maximum Tune 1/2, OutRun 2, Crazy Taxi)
  *     left stick X     steering        R2 (RT)    gas      L2 (LT)  brake
  *     R1 (Black)       gear up         L1 (White) gear down
- *     Triangle (Y)     view change     Square (X) Maximum Tune's 2nd button
- *     Circle (B)       card in (Maximum Tune)
+ *     Triangle (Y)     view change     Square (X) intrude change (Maximum
+ *     Circle (B)       card in (Maximum Tune)                  Tune)
+ *     Crazy Taxi: R1 drive, L1 reverse, Square jump, no view change.
+ *   Ollie King
+ *     left stick       board swing (left/right), front/rear (up/down)
+ *     L1 (White)       left grab       R1 (Black) right grab
  *   Every game
  *     Options (Start) or Cross (A)  START      D-pad up  COIN
  *     D-pad right      TEST            D-pad left SERVICE
@@ -464,4 +468,162 @@ void xemu_input_update_chihiro_jvs(void)
     }
 
     chihiro_ffb_rumble();
+}
+
+/*
+ * XPSemu Chihiro: what the controls above do in each game, for the arcade
+ * front's Controls page (ui/xui/dashboard.cc), in the Xbox layout the
+ * switches read; the page shows the DualSense button each comes from
+ * (Settings > Controller). A change to a game's layout above changes its
+ * rows here. The names are the cabinets' (and the desktop fork's keys).
+ */
+#define SYSTEM_CONTROLS                                                     \
+    { CONTROLLER_BUTTON_START, "Start", true },                             \
+    { CONTROLLER_BUTTON_A, "Start", true },                                 \
+    { CONTROLLER_BUTTON_DPAD_UP, "Coin", true },                            \
+    { CONTROLLER_BUTTON_DPAD_RIGHT, "Test", true },                         \
+    { CONTROLLER_BUTTON_DPAD_LEFT, "Service", true }
+
+static const ChihiroControlInfo controls_wmmt2[] = {
+    { CHIHIRO_CTL_LSTICK_X, "Steering", false },
+    { CHIHIRO_CTL_RT, "Gas", false },
+    { CHIHIRO_CTL_LT, "Brake", false },
+    { CONTROLLER_BUTTON_BLACK, "Gear up", false },
+    { CONTROLLER_BUTTON_WHITE, "Gear down", false },
+    { CONTROLLER_BUTTON_Y, "View change", false },
+    { CONTROLLER_BUTTON_X, "Intrude change", false },
+    { CONTROLLER_BUTTON_B, "Card in", false },
+    SYSTEM_CONTROLS,
+};
+static const ChihiroControlInfo controls_or2[] = {
+    { CHIHIRO_CTL_LSTICK_X, "Steering", false },
+    { CHIHIRO_CTL_RT, "Gas", false },
+    { CHIHIRO_CTL_LT, "Brake", false },
+    { CONTROLLER_BUTTON_BLACK, "Gear up", false },
+    { CONTROLLER_BUTTON_WHITE, "Gear down", false },
+    { CONTROLLER_BUTTON_Y, "View change", false },
+    SYSTEM_CONTROLS,
+};
+static const ChihiroControlInfo controls_ctx[] = {
+    { CHIHIRO_CTL_LSTICK_X, "Steering", false },
+    { CHIHIRO_CTL_RT, "Gas", false },
+    { CHIHIRO_CTL_LT, "Brake", false },
+    { CONTROLLER_BUTTON_BLACK, "Drive", false },
+    { CONTROLLER_BUTTON_WHITE, "Reverse", false },
+    { CONTROLLER_BUTTON_X, "Jump", false },
+    SYSTEM_CONTROLS,
+};
+static const ChihiroControlInfo controls_ok[] = {
+    { CHIHIRO_CTL_LSTICK_X, "Board swing", false },
+    { CHIHIRO_CTL_LSTICK_Y, "Board front/rear", false },
+    { CONTROLLER_BUTTON_WHITE, "Left grab", false },
+    { CONTROLLER_BUTTON_BLACK, "Right grab", false },
+    SYSTEM_CONTROLS,
+};
+/* gun_inputs: R1 is the gun's body button, L1 the switch Ghost Squad calls
+ * Change and Virtua Cop 3 is a pedal (none on The House of the Dead III). */
+static const ChihiroControlInfo controls_hotd3[] = {
+    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_RT, "Trigger", false },
+    { CHIHIRO_CTL_LT, "Screen in/out", false },
+    { CONTROLLER_BUTTON_BLACK, "Gun button", false },
+    SYSTEM_CONTROLS,
+};
+static const ChihiroControlInfo controls_vc3[] = {
+    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_RT, "Trigger", false },
+    { CHIHIRO_CTL_LT, "Screen in/out", false },
+    { CONTROLLER_BUTTON_BLACK, "Change", false },
+    { CONTROLLER_BUTTON_WHITE, "Pedal", false },
+    SYSTEM_CONTROLS,
+};
+static const ChihiroControlInfo controls_gs[] = {
+    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_RT, "Trigger", false },
+    { CHIHIRO_CTL_LT, "Screen in/out", false },
+    { CONTROLLER_BUTTON_BLACK, "Gun button", false },
+    { CONTROLLER_BUTTON_WHITE, "Change", false },
+    { CONTROLLER_BUTTON_B, "Card in", false },
+    SYSTEM_CONTROLS,
+};
+/* Gundam and the games the cabinet table has no profile for */
+static const ChihiroControlInfo controls_none[] = {
+    SYSTEM_CONTROLS,
+};
+
+static const struct {
+    int profile;
+    const ChihiroControlInfo *rows;
+    int count;
+    const char *mouse; /* gun_inputs' mouse buttons */
+} chihiro_layouts[] = {
+#define LAYOUT(p, t, m) { CONFIG_CHIHIRO_JVS_PROFILE_##p, t, ARRAY_SIZE(t), m }
+    LAYOUT(WMMT2, controls_wmmt2, NULL),
+    LAYOUT(OR2, controls_or2, NULL),
+    LAYOUT(CTX, controls_ctx, NULL),
+    LAYOUT(OK, controls_ok, NULL),
+    LAYOUT(HOTD3, controls_hotd3,
+           "Mouse: move the cursor. Left button trigger, right gun button, "
+           "side button screen in/out."),
+    LAYOUT(VC3, controls_vc3,
+           "Mouse: move the cursor. Left button trigger, right change, "
+           "middle pedal, side button screen in/out."),
+    LAYOUT(GS, controls_gs,
+           "Mouse: move the cursor. Left button trigger, right gun button, "
+           "middle change, side button screen in/out."),
+#undef LAYOUT
+};
+
+int xemu_chihiro_controls(int profile, const ChihiroControlInfo **rows)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(chihiro_layouts); i++) {
+        if (chihiro_layouts[i].profile == profile) {
+            *rows = chihiro_layouts[i].rows;
+            return chihiro_layouts[i].count;
+        }
+    }
+    *rows = controls_none;
+    return ARRAY_SIZE(controls_none);
+}
+
+const char *xemu_chihiro_mouse_controls(int profile)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(chihiro_layouts); i++) {
+        if (chihiro_layouts[i].profile == profile) {
+            return chihiro_layouts[i].mouse;
+        }
+    }
+    return NULL;
+}
+
+/* The games chihiro.c's cabinet table knows by their XBE, by MAME set (the
+ * arcade front's kChihiroTitles): a game not running hasn't named itself. */
+static const struct {
+    const char *set;
+    int profile;
+} chihiro_set_profiles[] = {
+    { "hotd3", CONFIG_CHIHIRO_JVS_PROFILE_HOTD3 },
+    { "vcop3", CONFIG_CHIHIRO_JVS_PROFILE_VC3 },
+    { "ghostsqu", CONFIG_CHIHIRO_JVS_PROFILE_GS },
+    { "crtaxihr", CONFIG_CHIHIRO_JVS_PROFILE_CTX },
+    { "outr2", CONFIG_CHIHIRO_JVS_PROFILE_OR2 },
+    { "outr2st", CONFIG_CHIHIRO_JVS_PROFILE_OR2 },
+    { "ollie", CONFIG_CHIHIRO_JVS_PROFILE_OK },
+    { "wangmid", CONFIG_CHIHIRO_JVS_PROFILE_WMMT2 },
+    { "wangmid2", CONFIG_CHIHIRO_JVS_PROFILE_WMMT2 },
+    { "gundamos", CONFIG_CHIHIRO_JVS_PROFILE_GUNDAM },
+};
+
+int xemu_chihiro_game_profile(const char *set, bool running)
+{
+    int profile = running ? chihiro_detected_game_profile() : -1;
+    if (profile >= 0 || !set) {
+        return profile;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(chihiro_set_profiles); i++) {
+        if (!strcmp(set, chihiro_set_profiles[i].set)) {
+            return chihiro_set_profiles[i].profile;
+        }
+    }
+    return -1;
 }

@@ -1988,6 +1988,7 @@ void DashboardScene::Show()
     m_view = false;
     m_pad_page = false;
     m_pad_capture = false;
+    m_controls_page = false;
     m_kb_open = false;
     m_all_page = false;
     m_shelf = false;
@@ -3571,6 +3572,7 @@ static int GameRowIndex(int row)
 
 void DashboardScene::OpenGameSettings(const Game &game, bool from_shelf)
 {
+    m_controls_page = false;
     m_gs_open = true;
     m_gs_from_shelf = from_shelf;
     m_gs_game = game;
@@ -3882,7 +3884,9 @@ void DashboardScene::HandleInputInner()
         // XPSemu Chihiro: the arcade front. Left and right (L1, R1 five
         // at a time) choose, Cross plays (or goes back to the game running),
         // Triangle opens the game's settings, Options the emulator's,
-        // Circle goes back to the game running (Square ends it, above).
+        // D-pad down the game's controls (the D-pad only: the stick moves
+        // as it chooses), Circle goes back to the game running (Square ends
+        // it, above).
         int n = m_games.size();
         bool start = ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false);
         if (back) {
@@ -3890,6 +3894,7 @@ void DashboardScene::HandleInputInner()
             return;
         }
         if (start) {
+            m_controls_page = false;
             m_page = PAGE_SETTINGS;
             m_in_page = true;
             m_settings_cat = -1;
@@ -3907,6 +3912,29 @@ void DashboardScene::HandleInputInner()
             Launch(m_games[m_game]);
         } else if (options) {
             OpenGameSettings(m_games[m_game], true);
+        } else if (pressed & CONTROLLER_BUTTON_DPAD_DOWN) {
+            m_controls_page = true;
+            m_in_page = true;
+            ControlsLog();
+        }
+        return;
+    }
+
+    if (m_in_page && m_controls_page) {
+        // XPSemu Chihiro: a game's controls. Left and right (L1, R1 five at
+        // a time) show the other games', Circle goes back to the front.
+        int n = m_games.size();
+        if (back || !n) {
+            m_in_page = false; // The page stays while it slides away
+            return;
+        }
+        int was = m_game;
+        if (left) m_game = std::max(m_game - 1, 0);
+        if (right) m_game = std::min(m_game + 1, n - 1);
+        if (l1) m_game = std::max(m_game - 5, 0);
+        if (r1) m_game = std::min(m_game + 5, n - 1);
+        if (m_game != was) {
+            ControlsLog();
         }
         return;
     }
@@ -4415,6 +4443,9 @@ bool DashboardScene::Draw()
         }
     }
     m_page_anim = Approach(m_page_anim, m_in_page ? 1 : 0, dt, 10);
+    if (!m_in_page && m_page_anim < 0.01f) {
+        m_controls_page = false; // Gone
+    }
     m_menu_anim = Approach(m_menu_anim, m_page, dt, 16);
     // The Games carousel glides on a spring, as the Xbox 360's did: quick
     // off the mark, settling without a bounce (critically damped). Small
@@ -4469,6 +4500,8 @@ bool DashboardScene::Draw()
             if (m_kb_open) {
                 DrawKeyboard(s, a);
             }
+        } else if (m_controls_page) {
+            DrawControlsPage(s, a);
         } else switch (m_page) {
         case PAGE_GAMES: DrawGames(s, a); break;
         case PAGE_SETTINGS:
@@ -5450,6 +5483,12 @@ void DashboardScene::DrawPageHeader(float s, float a)
     // the title it had (names[] has only the pages).
     if (m_gs_open) {
         m_header = m_gs_patches ? "Game patches" : "Game settings";
+    } else if (m_controls_page) {
+        if (!m_games.empty()) {
+            m_header = "Controls: " +
+                       m_games[std::clamp(m_game, 0, (int)m_games.size() - 1)]
+                           .name;
+        }
     } else if (m_page == PAGE_SETTINGS && m_advanced) {
         m_header = "Advanced settings";
     } else if (m_page == PAGE_SETTINGS && m_pad_page) {
@@ -6593,14 +6632,10 @@ void DashboardScene::PadCapture()
     }
 }
 
-void DashboardScene::DrawPadPage(float s, float a)
+// The original Xbox controller both controller pages draw, its middle at c
+// (pixels; s pixels per 1080p unit).
+static void DrawXboxPad(ImDrawList *dl, ImVec2 c, float s, float a)
 {
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImVec2 size = ImGui::GetIO().DisplaySize;
-    ImFont *font = g_font_mgr.m_menu_font_medium;
-    ImFont *small = g_font_mgr.m_menu_font_small;
-    float slide = 200 * s * (1 - m_page_anim);
-    ImVec2 c(size.x / 2 + slide, 560 * s);
     auto at = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
 
     // The controller: its outline first (bigger, lime), then the body.
@@ -6649,20 +6684,35 @@ void DashboardScene::DrawPadPage(float s, float a)
     dl->AddCircleFilled(at(186, 60), 11 * s, Rgba(235, 235, 235, a), 20);
     dl->AddRectFilled(at(-52, -20), at(-28, -8), Rgba(48, 56, 48, a), 6 * s);
     dl->AddRectFilled(at(28, -20), at(52, -8), Rgba(48, 56, 48, a), 6 * s);
+}
 
-    // Where each control's callout points.
-    auto anchor = [&](int x) {
-        switch (x) {
-        case XB_A: return at(155, 5);      case XB_B: return at(190, -30);
-        case XB_X: return at(120, -30);    case XB_Y: return at(155, -65);
-        case XB_BLACK: return at(214, 34); case XB_WHITE: return at(186, 60);
-        case XB_BACK: return at(-40, -14); case XB_START: return at(40, -14);
-        case XB_LSTICK: return at(-155, -30); case XB_RSTICK: return at(75, 55);
-        case XB_UP: return at(-85, 36);    case XB_DOWN: return at(-85, 74);
-        case XB_LEFT: return at(-104, 55); case XB_RIGHT: return at(-66, 55);
-        case XB_LT: return at(-170, -150); default: return at(170, -150);
-        }
-    };
+// Where a control's callout points on that controller (XB_*).
+static ImVec2 XboxPadAnchor(ImVec2 c, float s, int x)
+{
+    auto at = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
+    switch (x) {
+    case XB_A: return at(155, 5);      case XB_B: return at(190, -30);
+    case XB_X: return at(120, -30);    case XB_Y: return at(155, -65);
+    case XB_BLACK: return at(214, 34); case XB_WHITE: return at(186, 60);
+    case XB_BACK: return at(-40, -14); case XB_START: return at(40, -14);
+    case XB_LSTICK: return at(-155, -30); case XB_RSTICK: return at(75, 55);
+    case XB_UP: return at(-85, 36);    case XB_DOWN: return at(-85, 74);
+    case XB_LEFT: return at(-104, 55); case XB_RIGHT: return at(-66, 55);
+    case XB_LT: return at(-170, -150); default: return at(170, -150);
+    }
+}
+
+void DashboardScene::DrawPadPage(float s, float a)
+{
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 size = ImGui::GetIO().DisplaySize;
+    ImFont *font = g_font_mgr.m_menu_font_medium;
+    ImFont *small = g_font_mgr.m_menu_font_small;
+    float slide = 200 * s * (1 - m_page_anim);
+    ImVec2 c(size.x / 2 + slide, 560 * s);
+
+    DrawXboxPad(dl, c, s, a);
+    auto anchor = [&](int x) { return XboxPadAnchor(c, s, x); };
 
     // Which Xbox controls a game would get pressed right now: the same
     // state the game reads (the DualSense, remapped).
@@ -6739,6 +6789,227 @@ void DashboardScene::DrawPadPage(float s, float a)
     ImVec2 hs = TextSize(small, 30 * s, help);
     Text(dl, small, 30 * s, ImVec2(size.x / 2 - hs.x / 2 + slide, 910 * s),
          Label(a), help);
+}
+
+//
+// XPSemu Chihiro: a game's controls (D-pad down on the arcade front): the
+// controller of Settings > Controller, each control the game reads called
+// out with what it does there and the DualSense button it comes from now.
+// xemu-input-chihiro.c has the rows, beside the layouts themselves.
+//
+
+// The Xbox control a row points at (XB_*), or -1.
+static int ChihiroControlXbox(uint32_t control)
+{
+    switch (control) {
+    case CONTROLLER_BUTTON_A: return XB_A;
+    case CONTROLLER_BUTTON_B: return XB_B;
+    case CONTROLLER_BUTTON_X: return XB_X;
+    case CONTROLLER_BUTTON_Y: return XB_Y;
+    case CONTROLLER_BUTTON_BLACK: return XB_BLACK;
+    case CONTROLLER_BUTTON_WHITE: return XB_WHITE;
+    case CONTROLLER_BUTTON_BACK: return XB_BACK;
+    case CONTROLLER_BUTTON_START: return XB_START;
+    case CONTROLLER_BUTTON_DPAD_UP: return XB_UP;
+    case CONTROLLER_BUTTON_DPAD_DOWN: return XB_DOWN;
+    case CONTROLLER_BUTTON_DPAD_LEFT: return XB_LEFT;
+    case CONTROLLER_BUTTON_DPAD_RIGHT: return XB_RIGHT;
+    case CHIHIRO_CTL_LT: return XB_LT;
+    case CHIHIRO_CTL_RT: return XB_RT;
+    case CHIHIRO_CTL_LSTICK_X:
+    case CHIHIRO_CTL_LSTICK_Y: return XB_LSTICK;
+    case CHIHIRO_CTL_RSTICK: return XB_RSTICK;
+    default: return -1;
+    }
+}
+
+// Its column (Settings > Controller's) and its place in it.
+static int ChihiroControlSlot(int xb, bool *right)
+{
+    for (int i = 0; i < 8; i++) {
+        if (kPadLeft[i] == xb || kPadRight[i] == xb) {
+            *right = kPadRight[i] == xb;
+            return i;
+        }
+    }
+    *right = true;
+    return 8;
+}
+
+// A small double arrow, the way a stick moves: across or up and down.
+static void DrawTwoWays(ImDrawList *dl, ImVec2 m, float r, bool across,
+                        ImU32 col, float s)
+{
+    ImVec2 d = across ? ImVec2(1, 0) : ImVec2(0, 1), n(d.y, d.x);
+    dl->AddLine(ImVec2(m.x - d.x * r, m.y - d.y * r),
+                ImVec2(m.x + d.x * r, m.y + d.y * r), col, 2.5f * s);
+    float h = 7 * s, w = 5.5f * s;
+    for (int k = -1; k <= 1; k += 2) {
+        ImVec2 tip(m.x + k * d.x * (r + 2 * s), m.y + k * d.y * (r + 2 * s));
+        ImVec2 base(tip.x - k * d.x * h, tip.y - k * d.y * h);
+        ImVec2 p1(base.x + n.x * w, base.y + n.y * w);
+        ImVec2 p2(base.x - n.x * w, base.y - n.y * w);
+        // Clockwise, as anti-aliased filling wants
+        float cross = (p1.x - tip.x) * (p2.y - tip.y) -
+                      (p1.y - tip.y) * (p2.x - tip.x);
+        if (cross < 0) {
+            std::swap(p1, p2);
+        }
+        dl->AddTriangleFilled(tip, p1, p2, col);
+    }
+}
+
+int DashboardScene::ControlsProfile(const Game &game)
+{
+    const ChihiroTitle *t = ChihiroTitleOf(Art(game.path).chihiro_id,
+                                           Art(game.path).stem);
+    const Game *playing = NowPlayingGame();
+    return xemu_chihiro_game_profile(t ? t->set : nullptr,
+                                     playing && playing->path == game.path);
+}
+
+// The game log's line as the page shows a game: which rows, and why.
+void DashboardScene::ControlsLog()
+{
+    if (m_games.empty()) {
+        return;
+    }
+    const Game &g = m_games[std::clamp(m_game, 0, (int)m_games.size() - 1)];
+    const ChihiroTitle *t = ChihiroTitleOf(Art(g.path).chihiro_id,
+                                           Art(g.path).stem);
+    const Game *playing = NowPlayingGame();
+    bool running = playing && playing->path == g.path;
+    int profile = ControlsProfile(g);
+    const ChihiroControlInfo *rows;
+    int n = xemu_chihiro_controls(profile, &rows);
+    fprintf(stderr,
+            "XPSemu Chihiro: controls of %s (set %s, %s): profile %d, "
+            "%d rows\n",
+            g.name.c_str(), t ? t->set : "unknown",
+            running ? "running, by its XBE" : "by its set", profile, n);
+}
+
+void DashboardScene::DrawControlsPage(float s, float a)
+{
+    if (m_games.empty()) {
+        return;
+    }
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 size = ImGui::GetIO().DisplaySize;
+    ImFont *small = g_font_mgr.m_menu_font_small;
+    float slide = 200 * s * (1 - m_page_anim);
+    ImVec2 c(size.x / 2 + slide, 560 * s);
+    const Game &game =
+        m_games[std::clamp(m_game, 0, (int)m_games.size() - 1)];
+    int profile = ControlsProfile(game);
+    const ChihiroControlInfo *rows;
+    int n = xemu_chihiro_controls(profile, &rows);
+
+    DrawXboxPad(dl, c, s, a);
+
+    // Pressed now, as the game gets it (the DualSense, remapped): lit, as
+    // on Settings > Controller.
+    ControllerState *pad = xemu_input_get_bound(0);
+    auto far = [](int v) { return v > 16000 || v < -16000; };
+    auto live = [&](uint32_t control) {
+        if (!pad) {
+            return false;
+        }
+        switch (control) {
+        case CHIHIRO_CTL_LT: return pad->axis[CONTROLLER_AXIS_LTRIG] > 16000;
+        case CHIHIRO_CTL_RT: return pad->axis[CONTROLLER_AXIS_RTRIG] > 16000;
+        case CHIHIRO_CTL_LSTICK_X: return far(pad->axis[CONTROLLER_AXIS_LSTICK_X]);
+        case CHIHIRO_CTL_LSTICK_Y: return far(pad->axis[CONTROLLER_AXIS_LSTICK_Y]);
+        case CHIHIRO_CTL_RSTICK:
+            return far(pad->axis[CONTROLLER_AXIS_RSTICK_X]) ||
+                   far(pad->axis[CONTROLLER_AXIS_RSTICK_Y]);
+        default: return (pad->buttons & control) != 0;
+        }
+    };
+
+    // The rows by column, in Settings > Controller's order, each column
+    // centred on the controller.
+    struct Row {
+        const ChihiroControlInfo *info;
+        int xb, slot;
+    };
+    std::vector<Row> side[2];
+    bool laid_out = false;
+    for (int i = 0; i < n; i++) {
+        int xb = ChihiroControlXbox(rows[i].control);
+        if (xb < 0) {
+            continue;
+        }
+        bool right;
+        int slot = ChihiroControlSlot(xb, &right);
+        side[right].push_back({ &rows[i], xb, slot });
+        laid_out |= !rows[i].system;
+    }
+    float bw = 440 * s, bh = 56 * s, gap = 70 * s;
+    for (int r = 0; r < 2; r++) {
+        std::vector<Row> &col = side[r];
+        std::stable_sort(col.begin(), col.end(),
+                         [](const Row &p, const Row &q) { return p.slot < q.slot; });
+        float bx = r ? size.x - 120 * s - bw + slide : 120 * s + slide;
+        float y0 = c.y - ((int)col.size() - 1) * gap / 2 - bh / 2;
+        for (size_t k = 0; k < col.size(); k++) {
+            const ChihiroControlInfo *info = col[k].info;
+            uint32_t ctl = info->control;
+            float by = y0 + k * gap;
+            ImVec2 p0(bx, by), p1(bx + bw, by + bh);
+            // The line to the control, dashed.
+            ImVec2 from(r ? p0.x : p1.x, by + bh / 2);
+            ImVec2 to = XboxPadAnchor(c, s, col[k].xb);
+            float len = sqrtf((to.x - from.x) * (to.x - from.x) +
+                              (to.y - from.y) * (to.y - from.y));
+            for (float d = 0; d < len; d += 12 * s) {
+                float d1 = std::min(d + 6 * s, len);
+                dl->AddLine(ImVec2(from.x + (to.x - from.x) * d / len,
+                                   from.y + (to.y - from.y) * d / len),
+                            ImVec2(from.x + (to.x - from.x) * d1 / len,
+                                   from.y + (to.y - from.y) * d1 / len),
+                            Line(a * 0.6f), 1.5f * s);
+            }
+            dl->AddCircleFilled(to, 4 * s, Line(a * 0.8f), 12);
+            if (live(ctl)) {
+                dl->AddCircleFilled(to, 22 * s, Lime(a * 0.35f), 24);
+                dl->AddCircleFilled(to, 9 * s, White(a), 16);
+                dl->AddRect(p0, p1, Lime(a), 10 * s, 0, 3 * s);
+            }
+            Bar(dl, p0, p1, s, false, a);
+            Text(dl, small, 30 * s, ImVec2(bx + 26 * s, by + 12 * s),
+                 info->system ? Soft(a) : Label(a), info->function);
+            // The DualSense's: a button as Settings > Controller has it, a
+            // stick as it is (sticks aren't remapped).
+            bool ways = ctl == CHIHIRO_CTL_LSTICK_X ||
+                        ctl == CHIHIRO_CTL_LSTICK_Y;
+            const char *src = ctl == CHIHIRO_CTL_RSTICK ? "Right stick" :
+                              ways ? "Left stick" :
+                                     xemu_ps5_source_name(
+                                         xemu_ps5_map_get(col[k].xb));
+            float arrow = ways ? 34 * s : 0;
+            ImVec2 ss = TextSize(small, 30 * s, src);
+            ImU32 src_col = info->system ? Soft(a * 0.9f) : Lime(a);
+            Text(dl, small, 30 * s,
+                 ImVec2(bx + bw - 26 * s - arrow - ss.x, by + 12 * s), src_col,
+                 src);
+            if (ways) {
+                DrawTwoWays(dl, ImVec2(bx + bw - 26 * s - 13 * s, by + bh / 2),
+                            10 * s, ctl == CHIHIRO_CTL_LSTICK_X, src_col, s);
+            }
+        }
+    }
+
+    // Under it: a gun game's mouse, or that the game has no layout here.
+    const char *note =
+        !laid_out ? "No controller layout for this game yet: START, COIN, "
+                    "TEST and SERVICE only." :
+                    xemu_chihiro_mouse_controls(profile);
+    if (note) {
+        ImVec2 ns = TextSize(small, 30 * s, note);
+        Text(dl, small, 30 * s, ImVec2(size.x / 2 - ns.x / 2 + slide, 850 * s),
+             Label(a), note);
+    }
 }
 
 void DashboardScene::DrawSettings(float s, float a)
@@ -7059,7 +7330,9 @@ void DashboardScene::DrawHints(float s)
             hints.push_back({ GLYPH_CIRCLE, "Back to the game" });
         }
     } else {
-        if (m_gs_open && m_kb_open) {
+        if (m_controls_page) {
+            hints.push_back({ GLYPH_LSTICK, "Other games" });
+        } else if (m_gs_open && m_kb_open) {
             hints.push_back({ GLYPH_CROSS, "Type" });
             hints.push_back({ GLYPH_SQUARE, "Delete" });
             hints.push_back({ GLYPH_TRIANGLE, "Space" });

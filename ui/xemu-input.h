@@ -178,6 +178,29 @@ void xemu_ps5_mouse_format(char *buf, size_t size);
 // picture; false outside a gun game, with the crosshair off, or while the
 // gun is off the picture (xemu-input-chihiro.c).
 bool xemu_chihiro_crosshair(float *x, float *y);
+// XPSemu Chihiro: what each control does in a game (xemu-input-chihiro.c),
+// for the arcade front's Controls page. A row's control is a
+// CONTROLLER_BUTTON_* bit, or one of these for the triggers and sticks.
+enum {
+    CHIHIRO_CTL_LT = 1 << 16,
+    CHIHIRO_CTL_RT = 1 << 17,
+    CHIHIRO_CTL_LSTICK_X = 1 << 18, // Left and right
+    CHIHIRO_CTL_LSTICK_Y = 1 << 19, // Up and down
+    CHIHIRO_CTL_RSTICK = 1 << 20,   // Every way
+};
+typedef struct ChihiroControlInfo {
+    uint32_t control;
+    const char *function;
+    bool system; // START, COIN, TEST, SERVICE: the same in every game
+} ChihiroControlInfo;
+// A profile's rows (CONFIG_CHIHIRO_JVS_PROFILE_*; any other: the system
+// ones only) and their count.
+int xemu_chihiro_controls(int profile, const ChihiroControlInfo **rows);
+// What a mouse does in a gun game, or NULL.
+const char *xemu_chihiro_mouse_controls(int profile);
+// The profile of a game by its MAME set ("wangmid2"), or the running
+// game's own (by its XBE) when it is the one running; -1: none known.
+int xemu_chihiro_game_profile(const char *set, bool running);
 ControllerState *xemu_input_get_bound(int index);
 void xemu_input_bind(int index, ControllerState *state, int save);
 bool xemu_input_bind_xmu(int player_index, int peripheral_port_index,

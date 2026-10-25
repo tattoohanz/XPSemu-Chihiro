@@ -32,7 +32,8 @@ ID in their `boot.id`, whatever the file is called, with MAME's names.
 - Left / right choose (L1 / R1 five at a time), Cross plays (or goes back
   to the game running), Circle goes back to the game running, Square ends
   it, Triangle opens the game's settings (its name, a home screen tile),
-  Options the emulator's settings (L1 / R1 there: Settings, System).
+  Options the emulator's settings (L1 / R1 there: Settings, System),
+  D-pad down the game's controls (left / right there: the other games').
 - Tiles: a picture per game in `/data/xemu-chihiro/arcade/`, `.png` or
   `.jpg`, named after the game's MAME set (`wangmid2.jpg`), its name
   (`Wangan Midnight Maximum Tune 2.png`) or its file's name; a flyer's
@@ -91,18 +92,43 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
 
 ## Controls (Chihiro)
 
-| DualSense | Maximum Tune / OutRun 2 |
+D-pad down on the game select shows the selected game's controls, with the
+DualSense buttons Settings > Controller gives them (the sticks are never
+remapped). As they come:
+
+| DualSense | Maximum Tune 1 / 2 | OutRun 2 | Crazy Taxi High Roller |
+|---|---|---|---|
+| Left stick | Steering | Steering | Steering |
+| R2 / L2 | Gas / brake | Gas / brake | Gas / brake |
+| R1 / L1 | Gear up / down | Gear up / down | Drive / reverse |
+| Triangle | View change | View change | |
+| Square | Intrude change | | Jump |
+| Circle | Card in | | |
+
+| DualSense | Ghost Squad | Virtua Cop 3 | The House of the Dead III |
+|---|---|---|---|
+| Right stick | Move cursor | Move cursor | Move cursor |
+| R2 | Trigger | Trigger | Trigger |
+| L2 | Screen in / out | Screen in / out | Screen in / out |
+| R1 | Gun button | Change | Gun button |
+| L1 | Change | Pedal | |
+| Circle | Card in | | |
+
+A mouse (USB or Bluetooth) moves the cursor too: left button trigger, right
+button R1's, middle button L1's, a side button screen in / out.
+
+Ollie King: the left stick swings the board (left / right) and puts it to
+the front or rear (up / down); L1 / R1 left / right grab.
+
+| DualSense | Every game |
 |---|---|
-| Left stick | Steering |
-| R2 / L2 | Gas / brake |
-| R1 / L1 | Gear up / down |
-| Triangle | View change |
-| Square | Second wheel button (Maximum Tune) |
-| Circle | Card in (Maximum Tune) |
 | Options or Cross | Start |
 | D-pad up | Coin (Create too, but it opens the PS5 capture menu) |
 | D-pad right / left | Test / Service |
 | Touchpad | XPSemu's menu |
+
+Gundam, the MJ games and the golf games have no layout yet: only the buttons
+every game has.
 
 ## Logs
 
