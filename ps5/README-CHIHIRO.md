@@ -37,8 +37,13 @@ ID in their `boot.id`, whatever the file is called, with MAME's names.
   `.jpg`, named after the game's MAME set (`wangmid2.jpg`) or its name
   (`Wangan Midnight Maximum Tune 2.png`); a flyer's shape fits best, any
   size. A game without one shows its name.
+- Logos: a game's logo in `/data/xemu-chihiro/arcade/logos/`, named as the
+  tiles (`wangmid2.png`; a transparent PNG suits the white), shown under
+  the row instead of the selected game's name.
 - The Chihiro logo at the top left: `/data/xemu-chihiro/arcade/logo.png`
   (or `.jpg`; a transparent PNG suits the blue bar), fitted into the bar.
+- The settings pages (Options, Triangle) open over the same ground in its
+  colours, the page's name in the banner and its buttons in the bottom bar.
 
 ## Switches: /data/xemu-chihiro/env.txt
 

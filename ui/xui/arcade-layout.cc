@@ -4,7 +4,8 @@
 // Measured off a P-ras MULTI Ver.3 screen and put in 1080p units: the top
 // bar 0-105, the banner 105-193, the bottom bar from 925. Its tiles are
 // square; here they are a flyer's shape (A4, 1 by 1.41), 500 high from 232,
-// their centres 455 apart, the name at 785. Colours as on that screen: the
+// their centres 455 apart, the name at 785 (or the game's logo, 560 by 112
+// at most, round 800, its maker and year then at 882). Colours as on that screen: the
 // bars #02B9FF, the banner #C6FCFC, the names #3C313F, the badge #FF6189,
 // the bars' text white outlined in dark teal.
 //
@@ -108,7 +109,14 @@ void TextWrappedCentred(const Ctx &c, float size, float cx, float cy,
     }
 }
 
-void Bars(const Ctx &c, const ArcadeFrame &f)
+// The banner's text: the emulator's name, or a page's title.
+void BannerText(const Ctx &c, const char *text)
+{
+    TextCentred(c, 40, c.w / 2, 149, Col(c, 28, 39, 45), text);
+}
+
+// Everything but the banner's text.
+void Ground(const Ctx &c, const ArcadeFrame &f)
 {
     ImDrawList *dl = c.dl;
     float w = c.w;
@@ -120,7 +128,6 @@ void Bars(const Ctx &c, const ArcadeFrame &f)
     dl->AddRectFilledMultiColor(P(c, 0, 189), P(c, w, 199),
                                 Col(c, 198, 252, 252), Col(c, 198, 252, 252),
                                 Col(c, 255, 255, 255), Col(c, 255, 255, 255));
-    TextCentred(c, 40, w / 2, 149, Col(c, 28, 39, 45), f.banner.c_str());
 
     // The top bar, a lighter line at its foot
     dl->AddRectFilled(P(c, 0, 0), P(c, w, 105), Col(c, 2, 185, 255));
@@ -230,10 +237,12 @@ void Corner(const Ctx &c)
 
 const float kTileH = 500, kTileW = kTileH / 1.41f, kTileTop = 232, kStep = 455;
 
-void Tile(const Ctx &c, const ArcadeGame &g, float cx, float cy)
+// The tile centred on cx, cy, k times the row's size.
+void Tile(const Ctx &c, const ArcadeGame &g, float cx, float cy, float k = 1)
 {
     ImDrawList *dl = c.dl;
-    float hw = kTileW / 2, h = kTileH / 2;
+    float tw = kTileW * k, th = kTileH * k;
+    float hw = tw / 2, h = th / 2;
     ImVec2 p0 = P(c, cx - hw, cy - h), p1 = P(c, cx + hw, cy + h);
     // A soft shadow to the right and below
     for (int i = 1; i <= 4; i++) {
@@ -244,8 +253,8 @@ void Tile(const Ctx &c, const ArcadeGame &g, float cx, float cy)
     if (g.art.tex && g.art.w > 0 && g.art.h > 0) {
         // The picture fitted into the tile, white around it if its shape
         // is not a flyer's
-        float k = std::min(kTileW / g.art.w, kTileH / g.art.h);
-        float iw = g.art.w * k, ih = g.art.h * k;
+        float q = std::min(tw / g.art.w, th / g.art.h);
+        float iw = g.art.w * q, ih = g.art.h * q;
         dl->AddImage(g.art.tex, P(c, cx - iw / 2, cy - ih / 2),
                      P(c, cx + iw / 2, cy + ih / 2), ImVec2(0, 0), ImVec2(1, 1),
                      Col(c, 255, 255, 255, g.art.fade));
@@ -254,8 +263,8 @@ void Tile(const Ctx &c, const ArcadeGame &g, float cx, float cy)
         // Its name, as a logo on white
         float a = g.art.tex ? 1 - g.art.fade : 1;
         dl->AddRect(p0, p1, Col(c, 216, 216, 222, a), 0, 0, 2 * c.s);
-        TextWrappedCentred(c, 34, cx, cy, kTileW - 50, Col(c, 60, 49, 63, a),
-                           g.title);
+        TextWrappedCentred(c, 34 * k, cx, cy, (kTileW - 50) * k,
+                           Col(c, 60, 49, 63, a), g.title);
     }
     if (g.running) {
         // Its badge: the game in the machine now
@@ -276,7 +285,10 @@ void ArcadeDraw(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size)
         return;
     }
     Ctx c{ dl, f.font, size.y / 1080.0f, size.x / (size.y / 1080.0f), f.alpha };
-    Bars(c, f);
+    if (f.ground) {
+        Ground(c, f);
+    }
+    BannerText(c, f.banner.c_str());
 
     const float cy = kTileTop + kTileH / 2;
     int n = (int)f.games.size();
@@ -294,20 +306,65 @@ void ArcadeDraw(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size)
         Tile(c, f.games[i], x, cy);
     }
     if (n) {
-        // The selected game's name, cross-fading as the row moves
+        // The selected game's logo (else its name), cross-fading as the row
+        // moves, its maker and year under it
         int sel = std::clamp(f.selected, 0, n - 1);
+        const ArcadeGame &g = f.games[sel];
         float a = std::clamp(1 - fabsf(f.scroll - sel) * 2.5f, 0.0f, 1.0f);
-        TextCentred(c, 34, c.w / 2, 785, Col(c, 60, 49, 63, a),
-                    f.games[sel].title.c_str());
-        if (!f.games[sel].info.empty()) {
-            TextCentred(c, 24, c.w / 2, 830, Col(c, 150, 142, 160, a),
-                        f.games[sel].info.c_str());
+        float named = a, info_y = 830;
+        if (g.logo.tex && g.logo.w > 0 && g.logo.h > 0) {
+            const float bw = 560, bh = 112, cy = 800;
+            float q = std::min(bw / g.logo.w, bh / g.logo.h);
+            float lw = g.logo.w * q, lh = g.logo.h * q;
+            dl->AddImage(g.logo.tex, P(c, c.w / 2 - lw / 2, cy - lh / 2),
+                         P(c, c.w / 2 + lw / 2, cy + lh / 2), ImVec2(0, 0),
+                         ImVec2(1, 1), Col(c, 255, 255, 255, a * g.logo.fade));
+            named = a * (1 - g.logo.fade);
+            info_y = 882;
+        }
+        if (named > 0.001f) {
+            TextCentred(c, 34, c.w / 2, 785, Col(c, 60, 49, 63, named),
+                        g.title.c_str());
+        }
+        if (!g.info.empty()) {
+            TextCentred(c, 24, c.w / 2, info_y, Col(c, 150, 142, 160, a),
+                        g.info.c_str());
         }
     }
     dl->PopClipRect();
 
     Help(c);
     Corner(c);
+}
+
+void ArcadeDrawGround(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size)
+{
+    if (!f.font || size.y <= 0) {
+        return;
+    }
+    Ctx c{ dl, f.font, size.y / 1080.0f, size.x / (size.y / 1080.0f), f.alpha };
+    Ground(c, f);
+}
+
+void ArcadeDrawBanner(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size,
+                      const char *text)
+{
+    if (!f.font || size.y <= 0) {
+        return;
+    }
+    Ctx c{ dl, f.font, size.y / 1080.0f, size.x / (size.y / 1080.0f), f.alpha };
+    BannerText(c, text);
+}
+
+void ArcadeDrawTile(ImDrawList *dl, const ArcadeFrame &f, const ArcadeGame &g,
+                    ImVec2 size, ImVec2 p0, ImVec2 p1)
+{
+    if (!f.font || size.y <= 0) {
+        return;
+    }
+    Ctx c{ dl, f.font, size.y / 1080.0f, size.x / (size.y / 1080.0f), f.alpha };
+    float k = std::min((p1.x - p0.x) / c.s / kTileW, (p1.y - p0.y) / c.s / kTileH);
+    Tile(c, g, (p0.x + p1.x) / 2 / c.s, (p0.y + p1.y) / 2 / c.s, k);
 }
 
 void ArcadeMiddleTile(ImVec2 size, ImVec2 *p0, ImVec2 *p1)

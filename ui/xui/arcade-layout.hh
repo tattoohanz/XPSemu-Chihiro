@@ -30,6 +30,7 @@ struct ArcadeGame {
     std::string title;  // Under the tile; on it too when it has no picture
     std::string info;   // Maker and year, or ""
     ArcadeTileArt art;
+    ArcadeTileArt logo; // Under the row instead of its name when selected
     bool running = false; // The game in the machine now
 };
 
@@ -45,10 +46,35 @@ struct ArcadeFrame {
     std::string banner = "PS5 Chihiro Emulator \xE7\xA8\xBC\xE5\x83\x8D\xE4\xB8\xAD"; // 稼働中
     std::string empty;      // Said in the middle when there are no games
     ArcadeTileArt logo;     // Top left, fitted into the bar; none: nothing
+    bool ground = true;     // false: all but the ground (ArcadeDrawGround)
 };
+
+// The front's colours, which the pages over its ground take (dashboard.cc).
+struct ArcadeRgb {
+    int r, g, b;
+};
+constexpr ArcadeRgb kArcadeSky = { 2, 185, 255 };    // The bars; a selection
+constexpr ArcadeRgb kArcadeName = { 60, 49, 63 };    // Text on white
+constexpr ArcadeRgb kArcadeSoft = { 112, 104, 122 }; // Less important text
+constexpr ArcadeRgb kArcadeDeep = { 0, 132, 210 };   // Accents on white
+constexpr ArcadeRgb kArcadeEdge = { 130, 210, 240 }; // Outlines
+constexpr ArcadeRgb kArcadePale = { 234, 249, 255 }; // A row's own ground
+constexpr ArcadeRgb kArcadeTeal = { 16, 85, 101 };   // Around white on the bars
 
 // The whole screen, size in pixels (laid out in 1080p units).
 void ArcadeDraw(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size);
+
+// The ground alone: white between the bars, the banner without its text,
+// the logo, the top bar's text and the clock (the pages are drawn over it).
+void ArcadeDrawGround(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size);
+
+// Text in the banner, where the front names the emulator (a page's title).
+void ArcadeDrawBanner(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size,
+                      const char *text);
+
+// A game's tile in the box p0-p1 (pixels), fitted and centred in it.
+void ArcadeDrawTile(ImDrawList *dl, const ArcadeFrame &f, const ArcadeGame &g,
+                    ImVec2 size, ImVec2 p0, ImVec2 p1);
 
 // The middle tile's box in pixels (where a game's start animation begins).
 void ArcadeMiddleTile(ImVec2 size, ImVec2 *p0, ImVec2 *p1);

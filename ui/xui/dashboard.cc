@@ -75,11 +75,42 @@ static ImU32 Rgba(int r, int g, int b, float a)
                     (int)(255 * std::clamp(a, 0.f, 1.f)));
 }
 
-static ImU32 Line(float a) { return Rgba(70, 170, 30, a); }       // Outlines
-static ImU32 Label(float a) { return Rgba(150, 235, 60, a); }     // Text
-static ImU32 Lime(float a) { return Rgba(205, 245, 45, a); }      // Selection
-static ImU32 Ink(float a) { return Rgba(12, 45, 6, a); }          // On lime
+// XPSemu Chihiro: the pages over the arcade front's ground (white between
+// sky blue bars, arcade-layout.cc) take its colours instead; set while they
+// draw.
+static bool g_arcade_look;
+
+static ImU32 Rgba(ArcadeRgb c, float a) { return Rgba(c.r, c.g, c.b, a); }
+
+static ImU32 Line(float a) // Outlines
+{
+    return g_arcade_look ? Rgba(kArcadeEdge, a) : Rgba(70, 170, 30, a);
+}
+static ImU32 Label(float a) // Text
+{
+    return g_arcade_look ? Rgba(kArcadeName, a) : Rgba(150, 235, 60, a);
+}
+static ImU32 Lime(float a) // Accents (the selection itself: Pick)
+{
+    return g_arcade_look ? Rgba(kArcadeDeep, a) : Rgba(205, 245, 45, a);
+}
+static ImU32 Ink(float a) // On the selection
+{
+    return g_arcade_look ? Rgba(255, 255, 255, a) : Rgba(12, 45, 6, a);
+}
 static ImU32 White(float a) { return Rgba(255, 255, 255, a); }
+static ImU32 Pick(float a) // The selection
+{
+    return g_arcade_look ? Rgba(kArcadeSky, a) : Lime(a);
+}
+static ImU32 Strong(float a) // Text that is white on the green
+{
+    return g_arcade_look ? Rgba(kArcadeName, a) : White(a);
+}
+static ImU32 Soft(float a) // Less important text, white on the green
+{
+    return g_arcade_look ? Rgba(kArcadeSoft, a) : White(a);
+}
 
 static float Approach(float value, float target, float dt, float speed = 12)
 {
@@ -159,6 +190,9 @@ static ImVec2 TextSize(ImFont *font, float size, const char *text)
 static float HintsTop()
 {
     ImVec2 size = ImGui::GetIO().DisplaySize;
+    if (g_arcade_look) { // The arcade's bottom bar holds them
+        return 908 * (size.y / 1080.0f);
+    }
     return size.y - 118 * (size.y / 1080.0f);
 }
 
@@ -214,9 +248,11 @@ static void Bar(ImDrawList *dl, ImVec2 p0, ImVec2 p1, float s, bool selected,
 {
     float cut = (p1.y - p0.y) * 0.3f;
     BarPath(dl, p0, p1, cut);
-    dl->PathFillConvex(selected ? Lime(a * 0.95f) : Rgba(10, 40, 6, a * 0.7f));
+    dl->PathFillConvex(selected ? Pick(a * 0.95f) :
+                       g_arcade_look ? Rgba(kArcadePale, a) :
+                                       Rgba(10, 40, 6, a * 0.7f));
     BarPath(dl, p0, p1, cut);
-    dl->PathStroke(selected ? Lime(a) : Line(a * 0.9f), ImDrawFlags_Closed,
+    dl->PathStroke(selected ? Pick(a) : Line(a * 0.9f), ImDrawFlags_Closed,
                    2 * s);
 }
 
@@ -226,13 +262,17 @@ static void Focus(ImDrawList *dl, ImVec2 p0, ImVec2 p1, float s, float t,
 {
     float pulse = 0.75f + 0.25f * sinf(t * 4);
     float pad = 6 * s;
+    // On the arcade's white: deep blue instead of white
+    auto ring = [](float al) {
+        return g_arcade_look ? Rgba(kArcadeDeep, al) : White(al);
+    };
     for (int i = 3; i >= 1; i--) {
         float g = pad + i * 4 * s;
         dl->AddRect(ImVec2(p0.x - g, p0.y - g), ImVec2(p1.x + g, p1.y + g),
-                    White(a * 0.07f * pulse), 14 * s, 0, 4 * s);
+                    ring(a * 0.07f * pulse), 14 * s, 0, 4 * s);
     }
     dl->AddRect(ImVec2(p0.x - pad, p0.y - pad), ImVec2(p1.x + pad, p1.y + pad),
-                White(a * pulse), 12 * s, 0, 3.5f * s);
+                ring(a * pulse), 12 * s, 0, 3.5f * s);
 }
 
 // The controller's face buttons, drawn (so no special font is needed).
@@ -299,6 +339,10 @@ struct GameArt {
     XemuTexture tile = 0;
     bool tile_tried = false;
     double tile_time = 0;
+    // Its logo (arcade/logos), under the row when it is selected
+    XemuTexture logo = 0;
+    bool logo_tried = false;
+    double logo_time = 0;
 };
 
 static std::map<std::string, GameArt> g_art; // By disc image path
@@ -323,6 +367,7 @@ struct DecodeJob {
 };
 static const int kArcadeTilePart = 100; // XPSemu Chihiro: an arcade tile
 static const int kArcadeLogoPart = 101; // XPSemu Chihiro: the arcade logo
+static const int kArcadeGameLogoPart = 102; // XPSemu Chihiro: a game's logo
 // The arcade front's logo (arcade/logo.png), top left, and when it came
 static XemuTexture g_arcade_logo;
 static double g_arcade_logo_time;
@@ -432,6 +477,14 @@ static void UploadDecoded()
             continue;
         }
         GameArt &art = g_art[d.job.game_path];
+        if (d.job.part == kArcadeGameLogoPart) {
+            art.logo = tex;
+            art.logo_time = ImGui::GetTime();
+            fprintf(stderr, "XPSemu Chihiro: arcade game logo %s%s\n",
+                    d.job.file.c_str(),
+                    tex ? "" : " FAILED (not a picture stb_image reads)");
+            continue;
+        }
         if (d.job.part == kArcadeTilePart) {
             art.tile = tex;
             art.tile_time = ImGui::GetTime();
@@ -780,18 +833,24 @@ void DashboardScene::DrawKeyboard(float s, float a)
     ImVec2 size = ImGui::GetIO().DisplaySize;
     ImFont *font = g_font_mgr.m_menu_font_medium;
     ImFont *small = g_font_mgr.m_menu_font_small;
-    dl->AddRectFilled(ImVec2(0, 0), size, Rgba(0, 0, 0, a * 0.55f));
+    dl->AddRectFilled(ImVec2(0, 0), size,
+                      g_arcade_look ? Rgba(kArcadeTeal, a * 0.35f) :
+                                      Rgba(0, 0, 0, a * 0.55f));
     float pw = 1120 * s, ph = 600 * s;
     ImVec2 p0((size.x - pw) / 2, (size.y - ph) / 2 - 20 * s);
     ImVec2 p1(p0.x + pw, p0.y + ph);
-    dl->AddRectFilled(p0, p1, Rgba(6, 24, 6, a * 0.97f), 22 * s);
-    dl->AddRect(p0, p1, Lime(a * 0.8f), 22 * s, 0, 2 * s);
+    dl->AddRectFilled(p0, p1,
+                      g_arcade_look ? White(a) : Rgba(6, 24, 6, a * 0.97f),
+                      22 * s);
+    dl->AddRect(p0, p1, Pick(a * 0.8f), 22 * s, 0, 2 * s);
     Text(dl, small, 30 * s, ImVec2(p0.x + 40 * s, p0.y + 26 * s), Label(a),
          "Name");
 
     // The text, with a blinking cursor.
     ImVec2 f0(p0.x + 40 * s, p0.y + 70 * s), f1(p1.x - 40 * s, p0.y + 140 * s);
-    dl->AddRectFilled(f0, f1, Rgba(0, 0, 0, a * 0.5f), 12 * s);
+    dl->AddRectFilled(f0, f1,
+                      g_arcade_look ? Rgba(kArcadePale, a) : Rgba(0, 0, 0, a * 0.5f),
+                      12 * s);
     dl->AddRect(f0, f1, Line(a), 12 * s, 0, 2 * s);
     std::string shown = m_kb_text;
     float fs = 42 * s, room = f1.x - f0.x - 40 * s;
@@ -799,7 +858,7 @@ void DashboardScene::DrawKeyboard(float s, float a)
         shown.erase(0, 1); // The end shows when it's long
     }
     ImVec2 ts = TextSize(font, fs, shown.c_str());
-    Text(dl, font, fs, ImVec2(f0.x + 20 * s, f0.y + 12 * s), White(a), shown.c_str());
+    Text(dl, font, fs, ImVec2(f0.x + 20 * s, f0.y + 12 * s), Strong(a), shown.c_str());
     if (fmodf(m_time, 1.0f) < 0.6f) {
         float cx = f0.x + 22 * s + ts.x;
         dl->AddLine(ImVec2(cx, f0.y + 16 * s), ImVec2(cx, f1.y - 16 * s), Lime(a),
@@ -817,8 +876,14 @@ void DashboardScene::DrawKeyboard(float s, float a)
             ImVec2 k1(k0.x + w - gap, k0.y + kh);
             bool sel = r == m_kb_row && c == m_kb_col;
             bool lit = r == 4 && c == 0 && m_kb_shift;
-            dl->AddRectFilled(k0, k1, sel ? Lime(a) : Rgba(20, 52, 16, a * 0.9f),
+            dl->AddRectFilled(k0, k1,
+                              sel ? Pick(a) :
+                              g_arcade_look ? Rgba(kArcadePale, a) :
+                                              Rgba(20, 52, 16, a * 0.9f),
                               10 * s);
+            if (g_arcade_look && !sel) {
+                dl->AddRect(k0, k1, Line(a), 10 * s, 0, 1.5f * s);
+            }
             if (lit && !sel) {
                 dl->AddRect(k0, k1, Lime(a), 10 * s, 0, 2 * s);
             }
@@ -830,7 +895,7 @@ void DashboardScene::DrawKeyboard(float s, float a)
             ImVec2 ls = TextSize(r < 4 ? font : small, r < 4 ? 38 * s : 30 * s, label);
             Text(dl, r < 4 ? font : small, r < 4 ? 38 * s : 30 * s,
                  ImVec2((k0.x + k1.x - ls.x) / 2, (k0.y + k1.y - ls.y) / 2),
-                 sel ? Ink(a) : White(a * 0.92f), label);
+                 sel ? Ink(a) : Strong(a * 0.92f), label);
         }
     }
 }
@@ -1023,21 +1088,30 @@ static std::string ChihiroIdOf(const std::string &path)
 
 // The arcade front's tiles: /data/xemu-chihiro/arcade/<name>.png or .jpg,
 // the name a game's MAME set, its name, or its file's (any spelling
-// CoverKey reduces alike); listed with the games.
-static std::map<std::string, std::string> g_arcade_tiles;
+// CoverKey reduces alike); the games' logos the same way in arcade/logos.
+// Listed with the games.
+static std::map<std::string, std::string> g_arcade_tiles, g_arcade_logos;
+
+static bool IsPictureFile(const std::filesystem::directory_entry &entry)
+{
+    std::error_code ec;
+    std::string ext = entry.path().extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return entry.is_regular_file(ec) &&
+           (ext == ".png" || ext == ".jpg" || ext == ".jpeg");
+}
 
 static void ListArcadeTiles()
 {
     static std::string logo_asked; // The logo file asked for (once each)
     g_arcade_tiles.clear();
+    g_arcade_logos.clear();
     std::error_code ec;
     const std::string dir = XEMU_PS5_CHIHIRO_ARCADE_DIR;
-    std::filesystem::create_directories(dir, ec);
+    const std::string logos = dir + "/logos";
+    std::filesystem::create_directories(logos, ec);
     for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
-        std::string ext = entry.path().extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        if (entry.is_regular_file(ec) &&
-            (ext == ".png" || ext == ".jpg" || ext == ".jpeg")) {
+        if (IsPictureFile(entry)) {
             std::string key = CoverKey(entry.path().stem().string());
             if (key == "logo") { // The front's logo, top left: not a game's
                 if (logo_asked != entry.path().string()) {
@@ -1049,8 +1123,41 @@ static void ListArcadeTiles()
             g_arcade_tiles.emplace(key, entry.path().string());
         }
     }
-    fprintf(stderr, "XPSemu Chihiro: %d arcade tile(s) in %s\n",
-            (int)g_arcade_tiles.size(), dir.c_str());
+    for (const auto &entry : std::filesystem::directory_iterator(logos, ec)) {
+        if (IsPictureFile(entry)) {
+            g_arcade_logos.emplace(CoverKey(entry.path().stem().string()),
+                                   entry.path().string());
+        }
+    }
+    fprintf(stderr, "XPSemu Chihiro: %d arcade tile(s) in %s, %d logo(s) in "
+            "%s\n", (int)g_arcade_tiles.size(), dir.c_str(),
+            (int)g_arcade_logos.size(), logos.c_str());
+}
+
+// The names a game's tile or logo may have, most particular first.
+static std::vector<std::string> ArcadeKeys(const DashboardScene::Game &game)
+{
+    const GameArt &art = Art(game.path);
+    const ChihiroTitle *t = ChihiroTitleOf(art.chihiro_id, art.stem);
+    std::vector<std::string> keys = { CoverKey(art.stem), CoverKey(game.name) };
+    if (t) {
+        keys.insert(keys.begin(), { t->set, CoverKey(t->title) });
+    }
+    return keys;
+}
+
+// The first of keys in files, decoded as part (once per game).
+static void ArcadeAsk(const DashboardScene::Game &game,
+                      const std::map<std::string, std::string> &files,
+                      int max_h, int part)
+{
+    for (const auto &key : ArcadeKeys(game)) {
+        auto it = files.find(key);
+        if (!key.empty() && it != files.end()) {
+            DecodeRequest({ game.path, it->second, max_h, part });
+            return;
+        }
+    }
 }
 
 static XemuTexture ArcadeTile(const DashboardScene::Game &game)
@@ -1058,20 +1165,51 @@ static XemuTexture ArcadeTile(const DashboardScene::Game &game)
     GameArt &art = Art(game.path);
     if (!art.tile_tried) {
         art.tile_tried = true;
-        const ChihiroTitle *t = ChihiroTitleOf(art.chihiro_id, art.stem);
-        std::vector<std::string> keys = { CoverKey(art.stem), CoverKey(game.name) };
-        if (t) {
-            keys.insert(keys.begin(), { t->set, CoverKey(t->title) });
-        }
-        for (const auto &key : keys) {
-            auto it = g_arcade_tiles.find(key);
-            if (!key.empty() && it != g_arcade_tiles.end()) {
-                DecodeRequest({ game.path, it->second, 1000, kArcadeTilePart });
-                break;
-            }
-        }
+        ArcadeAsk(game, g_arcade_tiles, 1000, kArcadeTilePart);
     }
     return art.tile;
+}
+
+static XemuTexture ArcadeGameLogo(const DashboardScene::Game &game)
+{
+    GameArt &art = Art(game.path);
+    if (!art.logo_tried) {
+        art.logo_tried = true;
+        ArcadeAsk(game, g_arcade_logos, 420, kArcadeGameLogoPart);
+    }
+    return art.logo;
+}
+
+static ArcadeTileArt ArcadeArtOf(XemuTexture tex, double came)
+{
+    ArcadeTileArt a;
+    int w = 1, h = 1;
+    xemu_vk_texture_get_size(tex, &w, &h);
+    a.tex = (ImTextureID)tex;
+    a.w = (float)w;
+    a.h = (float)h;
+    a.fade = std::clamp((float)(ImGui::GetTime() - came) / 0.35f, 0.0f, 1.0f);
+    return a;
+}
+
+// A game as the arcade front draws it.
+static ArcadeGame ArcadeGameOf(const DashboardScene::Game &g, bool running)
+{
+    ArcadeGame ag;
+    ag.title = g.name;
+    if (const ChihiroTitle *ct = ChihiroTitleOf(Art(g.path).chihiro_id,
+                                                Art(g.path).stem)) {
+        ag.info = std::string(ct->maker) + "  \xC2\xB7  " +
+                  std::to_string(ct->year);
+    }
+    if (XemuTexture tex = ArcadeTile(g)) {
+        ag.art = ArcadeArtOf(tex, Art(g.path).tile_time);
+    }
+    if (XemuTexture tex = ArcadeGameLogo(g)) {
+        ag.logo = ArcadeArtOf(tex, Art(g.path).logo_time);
+    }
+    ag.running = running;
+    return ag;
 }
 
 void DashboardScene::ScanGames()
@@ -1085,6 +1223,9 @@ void DashboardScene::ScanGames()
         for (auto &[path, art] : g_art) {
             if (!art.tile) {
                 art.tile_tried = false; // Added since: looked for again
+            }
+            if (!art.logo) {
+                art.logo_tried = false;
             }
         }
     }
@@ -2712,7 +2853,7 @@ void DashboardScene::DrawDev(float s, float a, float x, float y, float ay2)
             t = t.substr(0, t.size() - 4) + "...";
         }
         Text(dl, small, size, ImVec2(px, py + i * line),
-             i == 0 ? Lime(a) : i == 3 ? White(a) : White(a * 0.8f), t.c_str());
+             i == 0 ? Lime(a) : i == 3 ? Strong(a) : Soft(a * 0.8f), t.c_str());
     }
 }
 #endif // XPSEMU_DEV
@@ -3361,7 +3502,7 @@ void DashboardScene::DrawAllPatches(float s, float a)
     float slide = 200 * s * (1 - m_page_anim);
     float x = 280 * s + slide, w = 1400 * s;
     if (m_all_patches.empty()) {
-        Text(dl, font, 48 * s, ImVec2(x, 260 * s), White(a),
+        Text(dl, font, 48 * s, ImVec2(x, 260 * s), Strong(a),
              "No patches in use for your games");
         Text(dl, small, 32 * s, ImVec2(x, 340 * s), Label(a),
              "Get them per game: Games > Triangle > Game patches.", w);
@@ -3387,7 +3528,7 @@ void DashboardScene::DrawAllPatches(float s, float a)
             game = game.substr(0, 24) + "...";
         }
         Text(dl, small, 30 * s, ImVec2(x + 40 * s, y + 14 * s),
-             selected ? Ink(a * 0.8f) : White(a * 0.6f), game.c_str());
+             selected ? Ink(a * 0.8f) : Soft(a * 0.6f), game.c_str());
         std::string name = g.name;
         if (name.size() > 46) {
             name = name.substr(0, 44) + "...";
@@ -3398,7 +3539,7 @@ void DashboardScene::DrawAllPatches(float s, float a)
                                        (on ? "On" : "Off");
         ImVec2 vs = TextSize(font, 38 * s, value);
         Text(dl, font, 38 * s, ImVec2(x + w - vs.x - 50 * s, y + 10 * s),
-             selected ? Ink(a) : on ? Lime(a) : White(a * 0.55f), value);
+             selected ? Ink(a) : on ? Lime(a) : Soft(a * 0.55f), value);
     }
     Focus(dl, ImVec2(x, y0 + (m_all_row - top) * gap),
           ImVec2(x + w, y0 + (m_all_row - top) * gap + h), s, m_time, a);
@@ -4297,18 +4438,15 @@ bool DashboardScene::Draw()
                              10);
 
 
+    // XPSemu Chihiro: the arcade front. A page fades in over its ground as
+    // the front's own fades out, in the front's colours (g_arcade_look,
+    // back to the dashboard's when this returns).
+    struct LookReset {
+        ~LookReset() { g_arcade_look = false; }
+    } look_reset;
     if (m_arcade && !m_setup) {
-        // XPSemu Chihiro: the arcade front, a page fading in over it on
-        // the dashboard's own ground.
-        if (m_page_anim < 0.99f) {
-            DrawArcade(m_alpha * (1 - m_page_anim));
-        }
-        if (m_page_anim > 0.01f) {
-            float keep = m_alpha;
-            m_alpha = keep * m_page_anim;
-            DrawBackground(s);
-            m_alpha = keep;
-        }
+        DrawArcade(m_alpha, 1 - m_page_anim);
+        g_arcade_look = true;
     } else {
         DrawBackground(s);
     }
@@ -4347,9 +4485,16 @@ bool DashboardScene::Draw()
         case PAGE_SYSTEM: DrawSystem(s, a); break;
         }
     }
-    if (!m_arcade || m_page_anim > 0.5f) { // The front has its own
+    if (!m_arcade) {
         DrawHints(s);
         DrawStatus(s);
+    } else if (m_in_page) {
+        // A page's, in the arcade's bottom bar as the front's help fades
+        // out (its top bar has the clock).
+        float keep = m_alpha;
+        m_alpha = keep * std::clamp(m_page_anim * 2 - 1, 0.0f, 1.0f);
+        DrawHints(s);
+        m_alpha = keep;
     }
     if (!m_arcade && m_attract_alpha > 0.01f) {
         DrawAttract(s, m_alpha * m_attract_alpha);
@@ -4502,8 +4647,9 @@ void DashboardScene::DrawOrb(float cx, float cy, float r)
 }
 
 // XPSemu Chihiro: the arcade front (arcade-layout.cc) for the games here;
-// the row glides on the Games carousel's spring (m_game_anim).
-void DashboardScene::DrawArcade(float a)
+// the row glides on the Games carousel's spring (m_game_anim). Its ground
+// at a, the rest (the games, the banner's text, the help) at a * front.
+void DashboardScene::DrawArcade(float a, float front)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 size = ImGui::GetIO().DisplaySize;
@@ -4527,23 +4673,7 @@ void DashboardScene::DrawArcade(float a)
     const Game *playing = NowPlayingGame();
     double t = ImGui::GetTime();
     for (const auto &g : m_games) {
-        ArcadeGame ag;
-        ag.title = g.name;
-        const GameArt &art = Art(g.path);
-        if (const ChihiroTitle *ct = ChihiroTitleOf(art.chihiro_id, art.stem)) {
-            ag.info = std::string(ct->maker) + "  \xC2\xB7  " +
-                      std::to_string(ct->year);
-        }
-        if (XemuTexture tex = ArcadeTile(g)) {
-            int w = 1, h = 1;
-            xemu_vk_texture_get_size(tex, &w, &h);
-            ag.art.tex = (ImTextureID)tex;
-            ag.art.w = (float)w;
-            ag.art.h = (float)h;
-            ag.art.fade = std::clamp((float)(t - art.tile_time) / 0.35f, 0.0f, 1.0f);
-        }
-        ag.running = playing && playing->path == g.path;
-        f.games.push_back(std::move(ag));
+        f.games.push_back(ArcadeGameOf(g, playing && playing->path == g.path));
     }
     if (m_games.empty()) {
         f.empty = "Put your Chihiro netboot images (.bin) in "
@@ -4557,7 +4687,12 @@ void DashboardScene::DrawArcade(float a)
         f.logo.h = (float)h;
         f.logo.fade = std::clamp((float)(t - g_arcade_logo_time) / 0.35f, 0.0f, 1.0f);
     }
-    ArcadeDraw(dl, f, size);
+    ArcadeDrawGround(dl, f, size);
+    if (front > 0.01f) {
+        f.alpha = a * front;
+        f.ground = false;
+        ArcadeDraw(dl, f, size);
+    }
     // The middle tile's box, where a game's start animation begins
     ArcadeMiddleTile(size, &m_sel0, &m_sel1);
 }
@@ -5024,7 +5159,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
                 }
                 snprintf(value, sizeof(value), selected ? "%s  >" : "%s", n.c_str());
                 if (!selected && !GameOwnName(KeyOf(m_gs_game))) {
-                    col = White(a * 0.55f); // Its own name
+                    col = Soft(a * 0.55f); // Its own name
                 }
             } else if (i == GS_SHORTCUT) {
                 bool busy;
@@ -5037,7 +5172,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
                          m_gs_shortcut.empty() ? (selected ? "Create  >" : "Create") :
                                                  "On the home screen");
                 if (!selected && m_gs_shortcut.empty()) {
-                    col = White(a * 0.55f);
+                    col = Soft(a * 0.55f);
                 }
             } else if (i == GS_PATCHES) {
                 int on = 0, usable = 0;
@@ -5054,7 +5189,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
                              selected ? "%s  >" : "%s",
                              m_gs_patch_items.empty() ? "None found" :
                                                         "None for your copy");
-                    col = selected ? Ink(a) : White(a * 0.55f);
+                    col = selected ? Ink(a) : Soft(a * 0.55f);
                 } else {
                     snprintf(value, sizeof(value), selected ? "%d of %d on  >" :
                                                               "%d of %d on",
@@ -5070,7 +5205,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
                              selected   ? "<  Default (%s)  >" :
                                           "Default (%s)",
                              global.c_str());
-                    col = selected ? Ink(a) : White(a * 0.55f);
+                    col = selected ? Ink(a) : Soft(a * 0.55f);
                 } else {
                     snprintf(value, sizeof(value),
                              locked   ? "%s  (locked)" :
@@ -5078,7 +5213,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
                                         "%s",
                              GameOptionValueLabel(i, v));
                     if (locked && !selected) {
-                        col = White(a * 0.55f);
+                        col = Soft(a * 0.55f);
                     }
                 }
             }
@@ -5119,7 +5254,7 @@ void DashboardScene::DrawGameSettings(float s, float a)
     const char *gname = m_gs_game.name.c_str();
     ImVec2 ns = font->CalcTextSizeA(40 * s, FLT_MAX, 440 * s, gname);
     float ty = art1.y + 26 * s;
-    Text(dl, font, 40 * s, ImVec2(cx - ns.x / 2, ty), White(a), gname,
+    Text(dl, font, 40 * s, ImVec2(cx - ns.x / 2, ty), Strong(a), gname,
          440 * s);
     GamePlay play = GamePlayGet(m_gs_key);
     std::string played = "Played " + GamePlayTimeText(play.seconds);
@@ -5152,7 +5287,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
     if (m_gs_patch_items.empty() && m_store.empty()) {
         char id[16];
         snprintf(id, sizeof(id), "%08X", m_gs_game.title_id);
-        Text(dl, font, 48 * s, ImVec2(x, 260 * s), White(a),
+        Text(dl, font, 48 * s, ImVec2(x, 260 * s), Strong(a),
              "No patches for this game yet");
         std::string how =
             std::string("Put .JMP patch files (from the Xbox Patch Hub at "
@@ -5200,7 +5335,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
             Text(dl, font, 40 * s, ImVec2(x + 40 * s, y + 9 * s),
                  selected ? Ink(a) : Label(can ? a : a * 0.6f), name.c_str());
             Text(dl, font, 40 * s, ImVec2(x + w - vs.x - 50 * s, y + 9 * s),
-                 selected ? Ink(a) : can ? Lime(a) : White(a * 0.5f), value);
+                 selected ? Ink(a) : can ? Lime(a) : Soft(a * 0.5f), value);
             continue;
         }
         const auto &item = m_gs_patch_items[i];
@@ -5227,7 +5362,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
         Text(dl, font, 40 * s, ImVec2(x + 40 * s, y + 9 * s),
              selected ? Ink(a) : Label(ra), name.c_str());
         Text(dl, font, 40 * s, ImVec2(x + w - vs.x - 50 * s, y + 9 * s),
-             selected ? Ink(a) : on ? Lime(a) : White(a * 0.55f),
+             selected ? Ink(a) : on ? Lime(a) : Soft(a * 0.55f),
              value.c_str());
     }
     Focus(dl, ImVec2(x, y0 + (m_patch_row - top) * gap),
@@ -5266,7 +5401,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
         float ty = y0 + visible * gap + 6 * s;
         ty = TextFit(dl, small, 30 * s, ImVec2(x + 10 * s, ty), Label(a), about, w);
         TextFit(dl, small, 28 * s, ImVec2(x + 10 * s, ty + 8 * s),
-                st.state == STORE_WORKS ? White(a * 0.7f) : Lime(a), detail, w);
+                st.state == STORE_WORKS ? Soft(a * 0.7f) : Lime(a), detail, w);
         return;
     }
     const auto &sel = m_gs_patch_items[m_patch_row];
@@ -5294,7 +5429,7 @@ void DashboardScene::DrawGamePatches(float s, float a, float x, float w)
     ty = TextFit(dl, small, 30 * s, ImVec2(x + 10 * s, ty), Label(a), about, w);
     if (!detail.empty()) {
         TextFit(dl, small, 28 * s, ImVec2(x + 10 * s, ty + 8 * s),
-                sel.problem.empty() || sel.problem == "Info" ? White(a * 0.7f) :
+                sel.problem.empty() || sel.problem == "Info" ? Soft(a * 0.7f) :
                                                                Lime(a),
                 detail, w);
     }
@@ -5310,9 +5445,6 @@ void DashboardScene::DrawPageHeader(float s, float a)
     float save_alpha = m_alpha;
     m_alpha = a;
 
-    DrawOrb(150 * s, 130 * s, 70 * s);
-    ImVec2 p0(280 * s + slide, 80 * s), p1(1500 * s + slide, 180 * s);
-    Bar(dl, p0, p1, s, true, a);
     // A game's settings opened on the shelf leave m_page on the menu's last
     // item, which isn't a page: as that page slides away after Back, keep
     // the title it had (names[] has only the pages).
@@ -5330,6 +5462,19 @@ void DashboardScene::DrawPageHeader(float s, float a)
         m_header = names[m_page];
     }
     std::string title = Upper(m_header.c_str());
+    if (g_arcade_look) {
+        // The arcade front's banner names the page, where the front names
+        // the emulator (that fades out as this fades in).
+        ArcadeFrame f;
+        f.font = g_font_mgr.m_arcade_font;
+        f.alpha = a;
+        ArcadeDrawBanner(dl, f, ImGui::GetIO().DisplaySize, title.c_str());
+        m_alpha = save_alpha;
+        return;
+    }
+    DrawOrb(150 * s, 130 * s, 70 * s);
+    ImVec2 p0(280 * s + slide, 80 * s), p1(1500 * s + slide, 180 * s);
+    Bar(dl, p0, p1, s, true, a);
     Text(dl, font, 64 * s, ImVec2(p0.x + 50 * s, p0.y + 16 * s), Ink(a),
          title.c_str());
     m_alpha = save_alpha;
@@ -6164,6 +6309,15 @@ void DashboardScene::DrawGameArt(const Game &game, ImVec2 p0, ImVec2 p1,
     ImVec2 c(p0.x + bw / 2, p0.y + bh / 2);
     float s = ImGui::GetIO().DisplaySize.y / 1080.0f;
 
+    if (g_arcade_look && game.chihiro) { // Its tile, as on the arcade front
+        ArcadeFrame f;
+        f.font = g_font_mgr.m_arcade_font;
+        f.alpha = a;
+        ArcadeDrawTile(dl, f, ArcadeGameOf(game, false),
+                       ImGui::GetIO().DisplaySize, p0, p1);
+        return;
+    }
+
     XemuTexture tex = cover ? GameCover(game) : 0;
     if (!tex) {
         tex = GameImage(game);
@@ -6292,8 +6446,8 @@ static void DrawCategoryIcon(ImDrawList *dl, ImVec2 c, float r, int cat,
     // text.
     for (int pass = selected ? 1 : 0; pass < 2; pass++) {
         ImVec2 o = pass ? c : ImVec2(c.x + 2 * s, c.y + 2 * s);
-        ImU32 col = !pass ? Rgba(0, 0, 0, a * 0.35f) :
-                    selected ? Ink(a) : White(a);
+        ImU32 col = !pass ? Rgba(0, 0, 0, a * (g_arcade_look ? 0.12f : 0.35f)) :
+                    selected ? Ink(a) : g_arcade_look ? Lime(a) : White(a);
         float t = 3.2f * s;
         switch (cat) {
         case CAT_VIDEO: // A screen on a stand
@@ -6465,9 +6619,12 @@ void DashboardScene::DrawPadPage(float s, float a)
     // A soft sheen along the top.
     dl->AddRectFilledMultiColor(at(-200, -112), at(200, -60), White(a * 0.06f),
                                 White(a * 0.06f), White(0), White(0));
-    // The jewel (no logo: XPSemu green).
-    dl->AddCircleFilled(at(0, -78), 30 * s, Rgba(90, 200, 30, a * 0.25f), 32);
-    dl->AddCircleFilled(at(0, -78), 22 * s, Rgba(70, 180, 30, a), 32);
+    // The jewel (no logo: XPSemu green; the arcade's sky blue).
+    dl->AddCircleFilled(at(0, -78), 30 * s,
+                        g_arcade_look ? Pick(a * 0.25f) : Rgba(90, 200, 30, a * 0.25f),
+                        32);
+    dl->AddCircleFilled(at(0, -78), 22 * s,
+                        g_arcade_look ? Pick(a) : Rgba(70, 180, 30, a), 32);
     dl->AddCircleFilled(at(-6, -84), 7 * s, White(a * 0.6f), 16);
     // Sticks, d-pad, face buttons, black and white, back and start.
     for (ImVec2 st : { ImVec2(-155, -30), ImVec2(75, 55) }) {
@@ -6567,7 +6724,7 @@ void DashboardScene::DrawPadPage(float s, float a)
         ImVec2 ss = TextSize(small, 30 * s, src);
         float blink = waiting ? 0.55f + 0.45f * sinf(m_time * 8) : 1;
         Text(dl, small, 30 * s, ImVec2(bx + bw - ss.x - 26 * s, by + 12 * s),
-             selected ? Ink(a * blink) : (just ? Lime(a) : White(a * 0.9f)), src);
+             selected ? Ink(a * blink) : (just ? Lime(a) : Soft(a * 0.9f)), src);
     }
 
     // Focus, and what the selection does.
@@ -6673,7 +6830,7 @@ void DashboardScene::DrawSettings(float s, float a)
             }
             ImVec2 ss = TextSize(small, 30 * s, summary.c_str());
             Text(dl, small, 30 * s, ImVec2(x + w - ss.x - 60 * s, y + 27 * s),
-                 selected ? Ink(a * 0.8f) : White(a * 0.75f), summary.c_str());
+                 selected ? Ink(a * 0.8f) : Soft(a * 0.75f), summary.c_str());
         }
         Focus(dl, ImVec2(x, y0 + m_cat_sel * gap),
               ImVec2(x + w, y0 + m_cat_sel * gap + h), s, m_time, a);
@@ -6705,7 +6862,7 @@ void DashboardScene::DrawSettings(float s, float a)
                      value.c_str());
             ImVec2 vs = TextSize(font, 42 * s, text);
             Text(dl, font, 42 * s, ImVec2(x + w - vs.x - 50 * s, y + 12 * s),
-                 selected ? Ink(a) : White(ra * 0.9f), text);
+                 selected ? Ink(a) : Soft(ra * 0.9f), text);
         }
     }
     Focus(dl, ImVec2(x, y0 + at * gap), ImVec2(x + w, y0 + at * gap + h), s,
@@ -6777,7 +6934,7 @@ void DashboardScene::DrawAdvanced(float s, float a)
                  rows[i].value);
         ImVec2 vs = TextSize(font, 40 * s, value);
         Text(dl, font, 40 * s, ImVec2(x + w - vs.x - 50 * s, y + 9 * s),
-             selected ? Ink(a) : White(ra * 0.9f), value);
+             selected ? Ink(a) : Soft(ra * 0.9f), value);
     }
     Focus(dl, ImVec2(x, y0 + (m_adv_setting - top) * gap),
           ImVec2(x + w, y0 + (m_adv_setting - top) * gap + h), s, m_time, a);
@@ -6840,7 +6997,7 @@ void DashboardScene::DrawSystem(float s, float a)
         float ry = y + i * 58 * s;
         Text(dl, small, 34 * s, ImVec2(x + 10 * s, ry), Label(a * 0.9f),
              info[i].name);
-        Text(dl, small, 34 * s, ImVec2(x + 400 * s, ry), White(a * 0.9f),
+        Text(dl, small, 34 * s, ImVec2(x + 400 * s, ry), Soft(a * 0.9f),
              info[i].value);
     }
 
@@ -6995,16 +7152,33 @@ void DashboardScene::DrawHints(float s)
     for (const auto &h : shown) {
         float ha = a * h.alpha * h.alpha * (3 - 2 * h.alpha);
         float x = h.x;
+        if (g_arcade_look) { // On the sky blue bar: on a dark teal button
+            dl->AddCircleFilled(ImVec2(x + 22 * s, y), 24 * s,
+                                Rgba(kArcadeTeal, ha * 0.9f), 32);
+        }
         DrawGlyph(dl, ImVec2(x + 22 * s, y), 22 * s, h.glyph, ha);
         if (h.live && h.glyph == GLYPH_CIRCLE && m_back_hold > 0.05f) {
             // Quick resume filling up as Circle is held.
             float t = std::min(m_back_hold / 0.6f, 1.0f);
             dl->PathArcTo(ImVec2(x + 22 * s, y), 31 * s, -IM_PI / 2,
                           -IM_PI / 2 + 2 * IM_PI * t, 32);
-            dl->PathStroke(Lime(ha), 0, 4 * s);
+            dl->PathStroke(g_arcade_look ? White(ha) : Lime(ha), 0, 4 * s);
         }
-        Text(dl, small, 32 * s, ImVec2(x + 56 * s, y - 18 * s),
-             White(ha * 0.85f), h.text.c_str());
+        ImVec2 at(x + 56 * s, y - 18 * s);
+        if (g_arcade_look) { // White outlined in dark teal, as the front's
+            static const float dirs[8][2] = {
+                { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 },
+                { -0.7f, -0.7f }, { 0.7f, -0.7f }, { -0.7f, 0.7f }, { 0.7f, 0.7f }
+            };
+            for (const auto &d : dirs) {
+                Text(dl, small, 32 * s,
+                     ImVec2(at.x + d[0] * 2 * s, at.y + d[1] * 2 * s),
+                     Rgba(kArcadeTeal, ha), h.text.c_str());
+            }
+            Text(dl, small, 32 * s, at, White(ha), h.text.c_str());
+            continue;
+        }
+        Text(dl, small, 32 * s, at, White(ha * 0.85f), h.text.c_str());
     }
 
 }

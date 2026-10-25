@@ -239,7 +239,7 @@ protected:
     // dashboard as it was). The settings and system pages are the
     // dashboard's own.
     bool m_arcade = false;
-    void DrawArcade(float a);
+    void DrawArcade(float a, float front);
 
     void ScanGames();
     void HandleInput();

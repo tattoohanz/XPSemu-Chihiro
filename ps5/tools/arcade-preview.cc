@@ -7,8 +7,11 @@
 //   arcade-preview <out.ppm> <width> <height> <selected> [scroll]
 //                  [title|picture.png]...
 //
-// Each game is a name, or "name=picture" for a tile with a picture;
-// "logo=picture" is the logo at the top left.
+// Each game is a name, then for each picture "=picture" (its tile's) or
+// "=logo:picture" (its logo, under the row when it is selected);
+// "logo=picture" is the logo at the top left. "page=Title" draws, instead
+// of the front, a mock of a Settings page over its ground in the colours
+// the dashboard's pages take there (DrawSettings' categories).
 //
 // Build (from the repository):
 //   g++ -std=c++17 -O2 -Isubprojects/imgui -Iui/xui -Iui/thirdparty/stb_image
@@ -123,6 +126,85 @@ static void Rasterise(ImDrawData *dd, std::vector<float> &fb, int W, int H)
     }
 }
 
+static ImU32 Rgb(ArcadeRgb c, float a = 1)
+{
+    return IM_COL32(c.r, c.g, c.b, (int)(255 * a));
+}
+
+// A mock of a Settings page over the front's ground: the dashboard's Bar
+// (corners cut), its rows and focus ring, and the hints in the bottom bar,
+// in the colours the pages take there (dashboard.cc, g_arcade_look).
+static void DrawPageMock(ImDrawList *dl, const ArcadeFrame &f, ImFont *menu,
+                         ImVec2 size, const char *title)
+{
+    float s = size.y / 1080.0f;
+    ArcadeDrawGround(dl, f, size);
+    ArcadeDrawBanner(dl, f, size, title);
+    auto bar = [&](ImVec2 p0, ImVec2 p1, bool sel) {
+        float cut = (p1.y - p0.y) * 0.3f;
+        auto path = [&] {
+            dl->PathLineTo(ImVec2(p0.x + cut, p0.y));
+            dl->PathLineTo(ImVec2(p1.x, p0.y));
+            dl->PathLineTo(ImVec2(p1.x, p1.y - cut));
+            dl->PathLineTo(ImVec2(p1.x - cut, p1.y));
+            dl->PathLineTo(ImVec2(p0.x, p1.y));
+            dl->PathLineTo(ImVec2(p0.x, p0.y + cut));
+        };
+        path();
+        dl->PathFillConvex(sel ? Rgb(kArcadeSky, 0.95f) : Rgb(kArcadePale));
+        path();
+        dl->PathStroke(sel ? Rgb(kArcadeSky) : Rgb(kArcadeEdge, 0.9f),
+                       ImDrawFlags_Closed, 2 * s);
+    };
+    static const char *const cats[][2] = {
+        { "Video", "4x   16:9   Fit   Smooth" }, { "Sound", "100%   On   On" },
+        { "Interface", "Off   On   On   Off" },   { "Controller", "Your button layout" },
+        { "Patches", "All your games' patches" },
+        { "Advanced", "Memory, video output, audio, performance" },
+    };
+    float x = 280 * s, w = 1400 * s, h = 86 * s, gap = 102 * s, y0 = 236 * s;
+    int sel = 1;
+    for (int i = 0; i < 6; i++) {
+        float y = y0 + i * gap;
+        bool on = i == sel;
+        bar(ImVec2(x, y), ImVec2(x + w, y + h), on);
+        dl->AddCircle(ImVec2(x + 66 * s, y + h / 2), 20 * s,
+                      on ? IM_COL32_WHITE : Rgb(kArcadeDeep), 24, 3.2f * s);
+        dl->AddText(menu, 46 * s, ImVec2(x + 118 * s, y + 17 * s),
+                    on ? IM_COL32_WHITE : Rgb(kArcadeName), cats[i][0]);
+        ImVec2 m = menu->CalcTextSizeA(30 * s, FLT_MAX, 0, cats[i][1]);
+        dl->AddText(menu, 30 * s, ImVec2(x + w - m.x - 60 * s, y + 27 * s),
+                    on ? Rgb({ 255, 255, 255 }, 0.8f) : Rgb(kArcadeSoft, 0.75f),
+                    cats[i][1]);
+    }
+    float fy = y0 + sel * gap, pad = 6 * s;
+    for (int i = 3; i >= 1; i--) {
+        float g = pad + i * 4 * s;
+        dl->AddRect(ImVec2(x - g, fy - g), ImVec2(x + w + g, fy + h + g),
+                    Rgb(kArcadeDeep, 0.07f), 14 * s, 0, 4 * s);
+    }
+    dl->AddRect(ImVec2(x - pad, fy - pad), ImVec2(x + w + pad, fy + h + pad),
+                Rgb(kArcadeDeep), 12 * s, 0, 3.5f * s);
+    dl->AddText(menu, 32 * s, ImVec2(x + 10 * s, y0 + 6 * gap + 10 * s),
+                Rgb(kArcadeName), "How loud the games are, the menu sounds and "
+                                  "the music.");
+    // The hints, in the bottom bar
+    float hx = 90 * s, hy = 1000 * s;
+    for (const char *hint : { "Open", "Back" }) {
+        dl->AddCircleFilled(ImVec2(hx + 22 * s, hy), 24 * s, Rgb(kArcadeTeal, 0.9f), 32);
+        dl->AddCircle(ImVec2(hx + 22 * s, hy), 22 * s, IM_COL32(255, 255, 255, 153),
+                      32, 2.2f * s);
+        ImVec2 at(hx + 56 * s, hy - 18 * s);
+        for (float dx : { -2.f, 2.f, 0.f })
+            for (float dy : { -2.f, 2.f, 0.f })
+                if (dx || dy)
+                    dl->AddText(menu, 32 * s, ImVec2(at.x + dx * s, at.y + dy * s),
+                                Rgb(kArcadeTeal), hint);
+        dl->AddText(menu, 32 * s, at, IM_COL32_WHITE, hint);
+        hx += 100 * s + menu->CalcTextSizeA(32 * s, FLT_MAX, 0, hint).x;
+    }
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 5) {
@@ -146,34 +228,52 @@ int main(int argc, char **argv)
     }
     unsigned char *atlas;
     int aw, ah;
-    io.Fonts->GetTexDataAsRGBA32(&atlas, &aw, &ah);
-    io.Fonts->SetTexID(Upload(atlas, aw, ah));
 
+    ImFont *menu = io.Fonts->AddFontFromFileTTF("data/RobotoCondensed-Regular.ttf",
+                                                46.0f * scale);
     ArcadeFrame f;
     f.font = font;
     f.selected = atoi(argv[4]);
     f.scroll = argc > 5 ? (float)atof(argv[5]) : (float)f.selected;
     f.clock = "08:46";
+    io.Fonts->GetTexDataAsRGBA32(&atlas, &aw, &ah);
+    io.Fonts->SetTexID(Upload(atlas, aw, ah));
+    std::string page;
     for (int i = 6; i < argc; i++) {
         ArcadeGame g;
         std::string arg = argv[i];
         size_t eq = arg.find('=');
         g.title = arg.substr(0, eq);
-        if (eq != std::string::npos) {
+        if (g.title == "page") {
+            page = arg.substr(eq + 1);
+            continue;
+        }
+        // Its pictures, each after an "=": the tile's, or "logo:" its logo
+        bool top_logo = g.title == "logo";
+        while (eq != std::string::npos) {
+            size_t next = arg.find('=', eq + 1);
+            std::string file = arg.substr(eq + 1, next == std::string::npos ?
+                                                      std::string::npos :
+                                                      next - eq - 1);
+            eq = next;
+            bool is_logo = file.rfind("logo:", 0) == 0;
+            if (is_logo) {
+                file = file.substr(5);
+            }
             int w, h, n;
-            unsigned char *px = stbi_load(arg.substr(eq + 1).c_str(), &w, &h, &n, 4);
-            ArcadeTileArt &art = g.title == "logo" ? f.logo : g.art;
+            unsigned char *px = stbi_load(file.c_str(), &w, &h, &n, 4);
+            ArcadeTileArt &art = top_logo ? f.logo : is_logo ? g.logo : g.art;
             if (px) {
                 art.tex = Upload(px, w, h);
                 art.w = (float)w;
                 art.h = (float)h;
                 stbi_image_free(px);
             } else {
-                fprintf(stderr, "can't read %s\n", arg.substr(eq + 1).c_str());
+                fprintf(stderr, "can't read %s\n", file.c_str());
             }
-            if (g.title == "logo") { // logo=<picture>: the top left logo
-                continue;
-            }
+        }
+        if (top_logo) { // logo=<picture>: the top left logo
+            continue;
         }
         if (g.title == "Wangan Midnight Maximum Tune 2") {
             g.info = "NAMCO  2005";
@@ -186,7 +286,12 @@ int main(int argc, char **argv)
     }
 
     ImGui::NewFrame();
-    ArcadeDraw(ImGui::GetBackgroundDrawList(), f, io.DisplaySize);
+    if (page.empty()) {
+        ArcadeDraw(ImGui::GetBackgroundDrawList(), f, io.DisplaySize);
+    } else {
+        DrawPageMock(ImGui::GetBackgroundDrawList(), f, menu, io.DisplaySize,
+                     page.c_str());
+    }
     ImGui::Render();
 
     std::vector<float> fb((size_t)W * H * 3, 0.0f);
