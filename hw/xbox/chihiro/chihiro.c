@@ -3512,22 +3512,20 @@ static const uint8_t chihiro_ollie_sig[] = {
     0xD8, 0x0D, 0x68, 0x5E, 0x19, 0x00, 0xD8, 0x0D, 0x64, 0x5E, 0x19, 0x00
 };
 
-/* _11 and _22 come first: the aspect logged is _22 / _11 */
+/* the first two give the aspect logged: second / first (_22 / _11) */
+/* OutRun 2 (SP): the frustum the projection builder (00044B90 / 0003CBB0)
+ * keeps, at the near plane: left, right, bottom, top, near, far. Top first,
+ * then right: the aspect logged is right / top. (The matrix it writes goes
+ * to the top of a matrix stack that the view matrices reuse.) */
 static const ChihiroWatch chihiro_or2sp_watch[] = {
-    { "_11", 0x00425C54u, 0x00, false }, { "_22", 0x00425C54u, 0x14, false },
-    { "_31", 0x00425C54u, 0x20, false }, { "_33", 0x00425C54u, 0x28, false },
-    { "_43", 0x00425C54u, 0x38, false },
-    { "e0", 0x00423B10u, -1, false }, { "e1", 0x00423B14u, -1, false },
-    { "e2", 0x00423B18u, -1, false }, { "e3", 0x00423B1Cu, -1, false },
-    { "e4", 0x00423B20u, -1, false }, { "e5", 0x00423B24u, -1, false },
+    { "top", 0x00423B1Cu, -1, false }, { "right", 0x00423B14u, -1, false },
+    { "left", 0x00423B10u, -1, false }, { "bottom", 0x00423B18u, -1, false },
+    { "near", 0x00423B20u, -1, false }, { "far", 0x00423B24u, -1, false },
 };
 static const ChihiroWatch chihiro_or2_watch[] = {
-    { "_11", 0x00338704u, 0x00, false }, { "_22", 0x00338704u, 0x14, false },
-    { "_31", 0x00338704u, 0x20, false }, { "_33", 0x00338704u, 0x28, false },
-    { "_43", 0x00338704u, 0x38, false },
-    { "e0", 0x003366E0u, -1, false }, { "e1", 0x003366E4u, -1, false },
-    { "e2", 0x003366E8u, -1, false }, { "e3", 0x003366ECu, -1, false },
-    { "e4", 0x003366F0u, -1, false }, { "e5", 0x003366F4u, -1, false },
+    { "top", 0x003366ECu, -1, false }, { "right", 0x003366E4u, -1, false },
+    { "left", 0x003366E0u, -1, false }, { "bottom", 0x003366E8u, -1, false },
+    { "near", 0x003366F0u, -1, false }, { "far", 0x003366F4u, -1, false },
 };
 static const ChihiroWatch chihiro_ollie_watch[] = {
     { "_11", 0x001D6E20u, -1, false }, { "_22", 0x001D6E34u, -1, false },
@@ -3607,6 +3605,27 @@ static const ChihiroBytePatch ollie_ws[] = {
     { 0x000A2934u, ollie_cull_e, ollie_cull_r, sizeof(ollie_cull_e) },
 };
 
+/* OutRun 2 SP / OutRun 2: 16:9. The projection builder makes the frustum
+ * near * tan(vfov / 2) high and that times the aspect wide, and its culling
+ * planes from that frustum; the camera setup (00021E40 / 0001F300) copies
+ * the aspect, 4/3, from one constant into each camera, and two calls push a
+ * 4/3 of their own (at start-up, and a fixed 50 degree view). All three to
+ * 16/9: the same height, wider sides (Hor+). */
+static const uint8_t or2_aspect_e[] = { 0xAB, 0xAA, 0xAA, 0x3F }; /* 4/3  */
+static const uint8_t or2_aspect_r[] = { 0x39, 0x8E, 0xE3, 0x3F }; /* 16/9 */
+static const uint8_t or2_push_e[] = { 0x68, 0xAB, 0xAA, 0xAA, 0x3F };
+static const uint8_t or2_push_r[] = { 0x68, 0x39, 0x8E, 0xE3, 0x3F };
+static const ChihiroBytePatch or2sp_ws[] = {
+    { 0x00200258u, or2_aspect_e, or2_aspect_r, sizeof(or2_aspect_e) },
+    { 0x00042954u, or2_push_e, or2_push_r, sizeof(or2_push_e) },
+    { 0x00049954u, or2_push_e, or2_push_r, sizeof(or2_push_e) },
+};
+static const ChihiroBytePatch or2_ws[] = {
+    { 0x001CC370u, or2_aspect_e, or2_aspect_r, sizeof(or2_aspect_e) },
+    { 0x0003ABE4u, or2_push_e, or2_push_r, sizeof(or2_push_e) },
+    { 0x00041514u, or2_push_e, or2_push_r, sizeof(or2_push_e) },
+};
+
 static void chihiro_watch_check(void)
 {
     const char *base = chihiro_game_filename;
@@ -3639,6 +3658,24 @@ static void chihiro_watch_check(void)
                         ollie_ws, ARRAY_SIZE(ollie_ws), "OLLIE WIDESCREEN",
                         "draws 16:9: fov tan x 4/3 (0009EC05), k 0.75 "
                         "(0009E2D0, 0009EE4A), x culling (000A2934)");
+    /* both OutRun 2 builds are OUTRUN2.XBE: the one the code found */
+    if (chihiro_watch_game == &chihiro_watch_games[0]) {
+        chihiro_patch_group("XEMU_OUTRUN2_WIDESCREEN", "OUTRUN2.XBE", 0, 0,
+                            or2sp_ws, ARRAY_SIZE(or2sp_ws),
+                            "OUTRUN2 WIDESCREEN",
+                            "(OutRun 2 SP) draws 16:9: camera aspect 16/9 "
+                            "(00200258, 00042954, 00049954)");
+    } else if (chihiro_watch_game == &chihiro_watch_games[1]) {
+        chihiro_patch_group("XEMU_OUTRUN2_WIDESCREEN", "OUTRUN2.XBE", 0, 0,
+                            or2_ws, ARRAY_SIZE(or2_ws), "OUTRUN2 WIDESCREEN",
+                            "(OutRun 2) draws 16:9: camera aspect 16/9 "
+                            "(001CC370, 0003ABE4, 00041514)");
+    } else if (g_ascii_strcasecmp(base, "OUTRUN2.XBE") == 0 &&
+               getenv("XEMU_OUTRUN2_WIDESCREEN") &&
+               strcmp(getenv("XEMU_OUTRUN2_WIDESCREEN"), "1") == 0) {
+        fprintf(stderr, "Chihiro: OUTRUN2 WIDESCREEN: OUTRUN2.XBE is not a "
+                "build the patch knows, left alone\n");
+    }
     if (chihiro_watch_game) {
         fprintf(stderr, "Chihiro: %s camera (log only): %s, its code at "
                 "%08X as expected; values logged every 2 s while they "
@@ -3707,8 +3744,8 @@ static void chihiro_watch_tick(void)
     }
     len = 0;
     if (ok[0] && ok[1] && fabsf(v[0]) > 1e-6f) {
-        len += snprintf(line + len, sizeof(line) - len, "aspect _22/_11 %.4f |",
-                        v[1] / v[0]);
+        len += snprintf(line + len, sizeof(line) - len, "aspect %s/%s %.4f |",
+                        g->w[1].label, g->w[0].label, v[1] / v[0]);
     }
     for (size_t i = 0; i < g->n && len < (int)sizeof(line) - 32; i++) {
         if (!ok[i]) {

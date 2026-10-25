@@ -59,6 +59,11 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   and aspect, and its culling, in memory). Give it the 16:9 screen shape and
   `XEMU_WS_HACK=3` for its HUD (it draws 3D with programmable shaders too,
   so `2` would narrow its 3D). Off by default.
+- `XEMU_OUTRUN2_WIDESCREEN=1`: OutRun 2 and OutRun 2 SP draw 16:9
+  themselves (the camera's aspect, in memory: the same height, wider sides,
+  the culling with it). Give them the 16:9 screen shape. Their HUD stays
+  stretched for now (their 3D uses programmable shaders, so not
+  `XEMU_WS_HACK=2`). Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
