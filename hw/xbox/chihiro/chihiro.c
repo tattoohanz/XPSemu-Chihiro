@@ -3209,7 +3209,8 @@ static void chihiro_patch_wm2_kijima(void)
  * its frustum, which culls, from the same window, so the sides are drawn
  * by the game rather than just uncovered. Data only, both constants or
  * neither, export build only, in memory only; the 640x480 picture is then
- * shown 16:9 (the game's Screen shape setting), the 2D on it widened. The
+ * shown 16:9 (the game's Screen shape setting), its 2D narrowed back with
+ * XEMU_WS_HACK=2 (ui/xemu-widescreen.h). The
  * main camera is a global (V322 0x31A910, V307 0x234820), built before the
  * patch can be applied, so its aspect is set too when it still holds 4/3.
  * The log on the console showed it applied to the screen's RwCamera (640x480

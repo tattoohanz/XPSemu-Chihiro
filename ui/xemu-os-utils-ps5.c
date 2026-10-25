@@ -843,14 +843,17 @@ static const char kEnvTemplate[] =
     "#\n"
     "# Maximum Tune 1/2 export: the game itself draws 16:9, its camera wider\n"
     "# (in memory, only on V307.xbe / V322.xbe; 0 = 4:3). Give the game the\n"
-    "# 16:9 screen shape (Triangle on it) and leave XEMU_WS_HACK at 0 for it.\n"
+    "# 16:9 screen shape (Triangle on it) and XEMU_WS_HACK=2 for its HUD and\n"
+    "# menus (see below; 0 leaves them stretched).\n"
     "XEMU_WM1_WIDESCREEN=0\n"
     "XEMU_WM2_WIDESCREEN=0\n"
     "#\n"
     "# 16:9 widescreen for the Chihiro games (1 = on); set the screen shape\n"
     "# to 16:9 too. With it, as the desktop build's .bat: the copy-pass fix,\n"
     "# the HUD out to the 16:9 edges (within EDGE percent of an edge), the\n"
-    "# menus kept 4:3, the menu background not stretched.\n"
+    "# menus kept 4:3, the menu background not stretched. 2 = the same for\n"
+    "# the 2D only, for a game that draws its 3D 16:9 itself (Maximum Tune\n"
+    "# with XEMU_WM*_WIDESCREEN=1): set it for that game alone (below).\n"
     "XEMU_WS_HACK=0\n"
     "XEMU_WS_COPY=1\n"
     "XEMU_WS_HUD=1\n"
@@ -904,7 +907,8 @@ static const char kEnvTemplate[] =
     "# (to the end of the file or the next [name]). E.g. 16:9 for Maximum\n"
     "# Tune 2 alone:\n"
     "#[wangmid2]\n"
-    "#XEMU_WM2_WIDESCREEN=1\n";
+    "#XEMU_WM2_WIDESCREEN=1\n"
+    "#XEMU_WS_HACK=2\n";
 
 /*
  * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set

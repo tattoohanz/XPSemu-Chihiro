@@ -54,10 +54,14 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
 - `XEMU_WM1_WIDESCREEN=1`, `XEMU_WM2_WIDESCREEN=1`: Maximum Tune 1/2 export
   draws 16:9 itself (its camera's aspect and field of view, in memory), so
   the sides are drawn by the game. Give the game the 16:9 screen shape and
-  leave `XEMU_WS_HACK` at 0 for it. Off by default.
+  `XEMU_WS_HACK=2` for its HUD and menus. Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
+  `XEMU_WS_HACK=2` does the same to the 2D only (the programmable shaders;
+  these games draw their 3D with the fixed-function pipeline), for a game
+  whose 3D is made 16:9 by its own patch: in env.txt's section for that
+  game, e.g. `[wangmid2]` with `XEMU_WM2_WIDESCREEN=1` and `XEMU_WS_HACK=2`.
 - `XEMU_DEPTH_READ_LAG`, `XEMU_ZETA_REUSE_LARGER`, `XEMU_CUBE_FROM_SURFACES`,
   `XEMU_GPU_BLIT`: PS5 speed-ups, on by default; 0 does it as XPSemu does.
 - `XEMU_CHIHIRO_FFB=100`: the drive board's force feedback as DualSense

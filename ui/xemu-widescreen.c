@@ -24,6 +24,7 @@
 
 #include "xemu-widescreen.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 
 static bool g_widescreen = false;
@@ -38,17 +39,38 @@ bool xemu_get_widescreen(void)
     return g_widescreen;
 }
 
+static bool g_ws_checked;
+static float g_ws_scale = 1.0f;
+static bool g_ws_2d_only;
+
+static void xemu_ws_check(void)
+{
+    const char *e = getenv("XEMU_WS_HACK");
+
+    g_ws_checked = true;
+    if (e && (e[0] == '1' || e[0] == '2')) {
+        g_ws_scale = (4.0f / 3.0f) / (16.0f / 9.0f);   /* 0.75 */
+        g_ws_2d_only = e[0] == '2';
+        fprintf(stderr, "xemu: widescreen hack: clip x * %.3f, %s\n",
+                g_ws_scale, g_ws_2d_only ?
+                    "the 2D only (programmable shaders; the 3D as the game "
+                    "draws it)" :
+                    "every draw");
+    }
+}
+
 float xemu_get_ws_scale(void)
 {
-    static bool checked = false;
-    static float scale = 1.0f;
-
-    if (!checked) {
-        const char *e = getenv("XEMU_WS_HACK");
-        checked = true;
-        if (e && e[0] == '1')
-            scale = (4.0f / 3.0f) / (16.0f / 9.0f);   /* 0.75 */
+    if (!g_ws_checked) {
+        xemu_ws_check();
     }
+    return g_ws_scale;
+}
 
-    return scale;
+bool xemu_get_ws_2d_only(void)
+{
+    if (!g_ws_checked) {
+        xemu_ws_check();
+    }
+    return g_ws_2d_only;
 }

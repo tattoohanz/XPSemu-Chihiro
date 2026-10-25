@@ -919,7 +919,7 @@ static void hd_init(void)
 
     float ws = xemu_get_ws_scale();
     fprintf(hd.f,
-        "# xemu HUD diag (log only)  ws_scale=%.3f  every=%u flips  "
+        "# xemu HUD diag (log only)  ws_scale=%.3f%s  every=%u flips  "
         "max=%u frames\n"
         "# x/y: guest framebuffer units 0..surfaceSize, before the ws hack; "
         "x%% = x / surfaceSize.x\n"
@@ -945,7 +945,8 @@ static void hd_init(void)
         "after a frame with a backdrop and no anchored HUD)\n"
         "# 16:9 menu background: %s (ws=wide: full-width layer stretched, "
         "after an untextured backdrop)\n",
-        ws, hd.every, hd.max_frames, ws,
+        ws, xemu_get_ws_2d_only() ? " (2D only: FF draws unscaled)" : "",
+        hd.every, hd.max_frames, ws,
         pgraph_hud_ws_active && hw.copy_on ? "on" : "off",
         pgraph_hud_ws_active && hw.hud_on ? "on" : "off",
         320.0f * (1.0f - ws) / ws,

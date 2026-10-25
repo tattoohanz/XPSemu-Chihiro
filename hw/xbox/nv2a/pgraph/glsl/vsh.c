@@ -588,12 +588,18 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
     /* The widescreen hack narrows clip x at gl_Position below; the
      * screen-space position the fragment shader rebuilds depth from
      * (barycentrics against gl_FragCoord) must be narrowed the same
-     * way, or the depth of every fragment off the centre is wrong. */
-    if (xemu_get_ws_scale() != 1.0f) {
+     * way, or the depth of every fragment off the centre is wrong.
+     * XEMU_WS_HACK=2 narrows the programmable draws only (the 2D of the
+     * Chihiro titles it is for); fixed-function ones keep their x. */
+    float ws = xemu_get_ws_scale();
+    if (state->is_fixed_function && xemu_get_ws_2d_only()) {
+        ws = 1.0f;
+    }
+    if (ws != 1.0f) {
         mstring_append_fmt(body,
                            "  vtxPos.x = 0.5 * surfaceSize.x + "
                            "(vtxPos.x - 0.5 * surfaceSize.x) * %.6f;\n",
-                           xemu_get_ws_scale());
+                           ws);
     }
 
     mstring_append(body, "\n"
@@ -645,9 +651,8 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
 
     /* Both the fixed-function path (vsh-ff.c) and the programmable one
      * (vsh-prog.c) converge on oPos, so this is the single place where the
-     * widescreen hack can narrow clip x for every draw the game makes. */
-    float ws = xemu_get_ws_scale();
-
+     * widescreen hack can narrow clip x for every draw the game makes (ws,
+     * above: for the programmable ones only with XEMU_WS_HACK=2). */
     if (opts.vulkan) {
         mstring_append_fmt(body,
                    "  gl_Position = vec4(oPos.x * %.6f, oPos.yzw);\n", ws

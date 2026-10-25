@@ -42,6 +42,14 @@ bool xemu_get_widescreen(void);
  * into generated shader source, so changing it needs a restart. */
 float xemu_get_ws_scale(void);
 
+/* XEMU_WS_HACK=2: the same scale for the programmable vertex shaders only.
+ * The Chihiro titles draw their 3D with the fixed-function pipeline and
+ * their HUD, menus and screen copies with programmable shaders, so this
+ * narrows the 2D (and keeps the HUD anchoring, copy-pass fix and 4:3
+ * menus, hw/xbox/nv2a/pgraph/hud_diag.c) while a game patch makes the 3D
+ * 16:9 itself (Maximum Tune 1/2: XEMU_WM1_/XEMU_WM2_WIDESCREEN=1). */
+bool xemu_get_ws_2d_only(void);
+
 #ifdef __cplusplus
 }
 #endif
