@@ -2824,12 +2824,13 @@ static void chihiro_patch_group(const char *env_name, const char *xbe,
     if (g_ascii_strcasecmp(base, xbe) != 0) {
         return;
     }
-    if (!chihiro_guest_rw(region_va, reg, sizeof(reg), false)) {
+    /* region_va 0: a game with one build, no region word to check */
+    if (region_va && !chihiro_guest_rw(region_va, reg, sizeof(reg), false)) {
         fprintf(stderr, "Chihiro: %s: %s is not mapped yet, skipped\n",
                 tag, xbe);
         return;
     }
-    if (ldl_le_p(reg) != region_want) {
+    if (region_va && ldl_le_p(reg) != region_want) {
         fprintf(stderr, "Chihiro: %s: region word %u, not the export build, "
                 "left alone\n", tag, ldl_le_p(reg));
         return;
@@ -3556,6 +3557,56 @@ static bool chihiro_watch_ok_last[CHIHIRO_WATCH_MAX];
 static int64_t chihiro_watch_last_ms;
 static int chihiro_watch_lines;
 
+/* HACK, opt-in with XEMU_OLLIE_WIDESCREEN=1: Ollie King draws 16:9 (Hor+).
+ * Its camera (above) projects with a horizontal fov: _34 = tan(fov/2), and
+ * _22 = W / (H * k) from the viewport, k = 1 (the camera's +0x40). With
+ * tan * 4/3 and k = 3/4 the picture is 4/3 wider and as tall as before;
+ * the focal length in pixels (x of the game's own projections) follows
+ * the tan, its y one (fy = -focal / k) stays, and so does the y culling
+ * (from H/2 * k / focal). The x culling factors are tan and 1 / cos(fov/2)
+ * from an angle table: the second becomes sqrt(1 + tan^2), the same for
+ * the new tan. Four sites, all or none, in memory only:
+ *   0x9E2D0, 0x9EE4A  mov [esi+0x40], 1.0 -> 0.75 (camera init, viewport)
+ *   0x9EC05  fov to radians, then tan, by call -> inline, divided by 0.75
+ *            (the 1/32768 at 0x185E58, the 0.75 at 0x181664)
+ *   0xA2934  1 / cos(fov/2) from the table -> sqrt(1 + tan^2) */
+static const uint8_t ollie_k1_e[] = { 0xC7, 0x46, 0x40, 0x00, 0x00, 0x80, 0x3F };
+static const uint8_t ollie_k1_r[] = { 0xC7, 0x46, 0x40, 0x00, 0x00, 0x40, 0x3F };
+static const uint8_t ollie_tan_e[] = {
+    0xD8, 0x0D, 0x68, 0x5E, 0x19, 0x00,  /* fmul [0x195E68] (360/65536)  */
+    0xD8, 0x0D, 0x64, 0x5E, 0x19, 0x00,  /* fmul [0x195E64] (pi/180)     */
+    0xD9, 0x1C, 0x24,                    /* fstp [esp]                   */
+    0xE8, 0x67, 0xE1, 0xFF, 0xFF         /* call 0x9CD80 (tan)           */
+};
+static const uint8_t ollie_tan_r[] = {
+    0xD9, 0xEB,                          /* fldpi                        */
+    0xDE, 0xC9,                          /* fmulp st(1)                  */
+    0xD8, 0x0D, 0x58, 0x5E, 0x18, 0x00,  /* fmul [0x185E58] (1/32768)    */
+    0xD9, 0xF2,                          /* fptan                        */
+    0xDD, 0xD8,                          /* fstp st(0)                   */
+    0xD8, 0x35, 0x64, 0x16, 0x18, 0x00   /* fdiv [0x181664] (0.75)       */
+};
+static const uint8_t ollie_cull_e[] = {
+    0x8B, 0x4E, 0x28,                    /* mov ecx, [esi+0x28]          */
+    0xD1, 0xF9,                          /* sar ecx, 1                   */
+    0xE8, 0xD2, 0x95, 0xFF, 0xFF,        /* call 0x9BF10 (cos table)     */
+    0xD8, 0x3D, 0xA4, 0xE5, 0x17, 0x00   /* fdivr [0x17E5A4] (1.0)       */
+};
+static const uint8_t ollie_cull_r[] = {
+    0xD9, 0x46, 0x34,                    /* fld [esi+0x34] (tan)         */
+    0xD8, 0xC8,                          /* fmul st(0), st(0)            */
+    0xD9, 0xE8,                          /* fld1                         */
+    0xDE, 0xC1,                          /* faddp st(1)                  */
+    0xD9, 0xFA,                          /* fsqrt                        */
+    0x90, 0x90, 0x90, 0x90, 0x90
+};
+static const ChihiroBytePatch ollie_ws[] = {
+    { 0x0009E2D0u, ollie_k1_e, ollie_k1_r, sizeof(ollie_k1_e) },
+    { 0x0009EE4Au, ollie_k1_e, ollie_k1_r, sizeof(ollie_k1_e) },
+    { 0x0009EC05u, ollie_tan_e, ollie_tan_r, sizeof(ollie_tan_e) },
+    { 0x000A2934u, ollie_cull_e, ollie_cull_r, sizeof(ollie_cull_e) },
+};
+
 static void chihiro_watch_check(void)
 {
     const char *base = chihiro_game_filename;
@@ -3569,6 +3620,10 @@ static void chihiro_watch_check(void)
             base = c + 1;
         }
     }
+    chihiro_patch_group("XEMU_OLLIE_WIDESCREEN", "OllieKing.xbe", 0, 0,
+                        ollie_ws, ARRAY_SIZE(ollie_ws), "OLLIE WIDESCREEN",
+                        "draws 16:9: fov tan x 4/3 (0009EC05), k 0.75 "
+                        "(0009E2D0, 0009EE4A), x culling (000A2934)");
     for (size_t i = 0; i < ARRAY_SIZE(chihiro_watch_games); i++) {
         const ChihiroWatchGame *g = &chihiro_watch_games[i];
         if (g_ascii_strcasecmp(base, g->xbe) != 0) {

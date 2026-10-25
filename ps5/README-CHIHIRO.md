@@ -55,6 +55,10 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   draws 16:9 itself (its camera's aspect and field of view, in memory), so
   the sides are drawn by the game. Give the game the 16:9 screen shape and
   `XEMU_WS_HACK=2` for its HUD and menus. Off by default.
+- `XEMU_OLLIE_WIDESCREEN=1`: Ollie King draws 16:9 itself (its camera's fov
+  and aspect, and its culling, in memory). Its HUD stays stretched; leave
+  `XEMU_WS_HACK` at 0 for it (it draws 3D with programmable shaders too, so
+  `2` would narrow its 3D). Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
