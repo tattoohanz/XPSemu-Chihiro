@@ -40,6 +40,8 @@
  * program whose boxes touch (glyphs of a string, outline passes) follow the
  * first one's side; a draw inside an element anchored earlier in the frame
  * (a needle in its dial, digits in their panel) follows that element.
+ * An untextured band as wide as the screen there (a banner across the 3D)
+ * is stretched to 16:9 instead, like a fade.
  *
  * 16:9 menu background (opt-in with XEMU_WS_MENUBG=1): when the backdrop
  * is an untextured fill (the menus), every later untextured full-width
@@ -1729,6 +1731,21 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
     }
     if (!anchor) {
         hw.run.valid = false;
+        return;
+    }
+
+    /* An untextured band as wide as the screen over the 3D (Maximum Tune
+     * 2's banner before a race, "4 racer  VS  <rival>", and the lines that
+     * slide in with it) is a backdrop strip, not an element: stretched to
+     * 16:9 like a fade, so the text on it, anchored, stays on it. */
+    if (!tex_on && !full_h && x1 - x0 >= W - 2.0f) {
+        hw.run.valid = false;
+        for (size_t i = 0; i < n; i++) {
+            target[i] = 0.5f * W + (sx[i] - 0.5f * W) / hw.ws;
+        }
+        hd.ws_action = hw_write_x(pg, prog, at, need, kind, n, ia_off,
+                                  ia_vsize, sx, target) ? HD_WS_WIDE
+                                                        : HD_WS_FAIL;
         return;
     }
 
