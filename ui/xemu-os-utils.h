@@ -65,6 +65,10 @@ const char *xemu_ps5_own_title_id(void);
 // and puts env.txt's NAME=VALUE lines in the environment. After the
 // settings are loaded, before anything reads them.
 void xemu_ps5_chihiro_prepare(void);
+// env.txt's switches for one game (the lines after its [name] line, name
+// being the image's file name without the extension) over the others;
+// after xemu_ps5_chihiro_boot_image, before anything reads them.
+void xemu_ps5_chihiro_env_game(const char *image);
 // The Chihiro image to boot this time (free it), or NULL for the Xbox:
 // the one the dashboard asked for before restarting the app
 // (XEMU_PS5_CHIHIRO_BOOT_FILE, taken once), else a home-screen shortcut's.

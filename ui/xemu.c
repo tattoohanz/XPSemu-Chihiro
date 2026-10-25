@@ -1602,6 +1602,10 @@ int main(int argc, char **argv)
      * it (then restarting the app), boots the Chihiro with it. */
     {
         char *chihiro = xemu_ps5_chihiro_boot_image();
+        if (chihiro) {
+            /* Its own switches from env.txt ([name] lines), e.g. 16:9 */
+            xemu_ps5_chihiro_env_game(chihiro);
+        }
         xemu_settings_set_string(&g_config.sys.files.dvd_path,
                                  chihiro ? chihiro : "");
         free(chihiro);

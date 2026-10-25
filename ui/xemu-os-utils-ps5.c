@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/param.h>
 #include <sys/cpuset.h>
 #include <sys/stat.h>
@@ -885,7 +886,14 @@ static const char kEnvTemplate[] =
     "XEMU_PCACHE_SAVE_FLIPS=600\n"
     "#\n"
     "# Chihiro log categories into xemu.log: boot,jvs,card,ffb,mbcom,usb,net\n"
-    "#XEMU_CHIHIRO_LOG=boot\n";
+    "#XEMU_CHIHIRO_LOG=boot\n"
+    "#\n"
+    "# Per game: a [name] line, name being the image's file name without\n"
+    "# .bin, then that game's switches, over the ones above for it only\n"
+    "# (to the end of the file or the next [name]). E.g. 16:9 for Maximum\n"
+    "# Tune 2 alone:\n"
+    "#[wangmid2]\n"
+    "#XEMU_WS_HACK=1\n";
 
 /*
  * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set
@@ -899,6 +907,34 @@ static struct {
     char value[256];
 } env_table[ENV_MAX];
 static int env_count;
+
+/* env.txt's per-game switches (the lines after a [name] line), put over the
+ * others when the app boots that game (xemu_ps5_chihiro_env_game). */
+static struct {
+    char game[64];
+    char name[64];
+    char value[256];
+} env_game_table[ENV_MAX];
+static int env_game_count;
+
+static void env_set(const char *name, const char *value)
+{
+    int slot = 0;
+    while (slot < env_count && strcmp(env_table[slot].name, name) != 0) {
+        slot++;
+    }
+    if (slot == ENV_MAX) {
+        fprintf(stderr, "XPSemu Chihiro: env %s ignored (more than %d)\n",
+                name, ENV_MAX);
+        return;
+    }
+    snprintf(env_table[slot].name, sizeof(env_table[slot].name), "%s", name);
+    snprintf(env_table[slot].value, sizeof(env_table[slot].value), "%s",
+             value);
+    if (slot == env_count) {
+        env_count++;
+    }
+}
 
 char *__real_getenv(const char *name);
 /* Hidden: the title must not export it (ps5-native-tool refuses exports). */
@@ -936,6 +972,7 @@ void xemu_ps5_chihiro_prepare(void)
         return;
     }
     char line[512];
+    char game[64] = ""; /* The [name] the lines are for, "" for every game */
     while (fgets(line, sizeof(line), f)) {
         char *p = line;
         while (*p == ' ' || *p == '\t') {
@@ -945,6 +982,19 @@ void xemu_ps5_chihiro_prepare(void)
         while (n && (p[n - 1] == '\n' || p[n - 1] == '\r' ||
                      p[n - 1] == ' ' || p[n - 1] == '\t')) {
             p[--n] = 0;
+        }
+        if (n >= 2 && p[0] == '[' && p[n - 1] == ']') {
+            p[n - 1] = 0;
+            char *g = p + 1;
+            while (*g == ' ' || *g == '\t') {
+                g++;
+            }
+            size_t k = strlen(g);
+            while (k && (g[k - 1] == ' ' || g[k - 1] == '\t')) {
+                g[--k] = 0;
+            }
+            snprintf(game, sizeof(game), "%s", g);
+            continue;
         }
         char *eq = strchr(p, '=');
         if (!n || p[0] == '#' || !eq || eq == p) {
@@ -959,24 +1009,51 @@ void xemu_ps5_chihiro_prepare(void)
         while (*value == ' ' || *value == '\t') {
             value++;
         }
-        int slot = 0;
-        while (slot < env_count && strcmp(env_table[slot].name, name) != 0) {
-            slot++;
-        }
-        if (slot == ENV_MAX) {
-            fprintf(stderr, "XPSemu Chihiro: env %s ignored (more than %d)\n",
-                    name, ENV_MAX);
+        if (game[0]) {
+            if (env_game_count == ENV_MAX) {
+                fprintf(stderr, "XPSemu Chihiro: env [%s] %s ignored (more "
+                        "than %d per-game lines)\n", game, name, ENV_MAX);
+                continue;
+            }
+            snprintf(env_game_table[env_game_count].game,
+                     sizeof(env_game_table[0].game), "%s", game);
+            snprintf(env_game_table[env_game_count].name,
+                     sizeof(env_game_table[0].name), "%s", name);
+            snprintf(env_game_table[env_game_count].value,
+                     sizeof(env_game_table[0].value), "%s", value);
+            env_game_count++;
             continue;
         }
-        snprintf(env_table[slot].name, sizeof(env_table[slot].name), "%s", name);
-        snprintf(env_table[slot].value, sizeof(env_table[slot].value), "%s",
-                 value);
-        if (slot == env_count) {
-            env_count++;
-        }
+        env_set(name, value);
         fprintf(stderr, "XPSemu Chihiro: env %s=%s\n", name, value);
     }
     fclose(f);
+}
+
+void xemu_ps5_chihiro_env_game(const char *image)
+{
+    /* The image's file name, with and without its extension */
+    const char *base = strrchr(image, '/');
+    base = base ? base + 1 : image;
+    char stem[256];
+    snprintf(stem, sizeof(stem), "%s", base);
+    char *dot = strrchr(stem, '.');
+    if (dot && dot != stem) {
+        *dot = 0;
+    }
+    int applied = 0;
+    for (int i = 0; i < env_game_count; i++) {
+        const char *g = env_game_table[i].game;
+        if (strcasecmp(g, stem) != 0 && strcasecmp(g, base) != 0) {
+            continue;
+        }
+        env_set(env_game_table[i].name, env_game_table[i].value);
+        fprintf(stderr, "XPSemu Chihiro: env [%s] %s=%s (this game's)\n", g,
+                env_game_table[i].name, env_game_table[i].value);
+        applied++;
+    }
+    fprintf(stderr, "XPSemu Chihiro: %d switch(es) of env.txt's [%s] for %s\n",
+            applied, stem, base);
 }
 
 static char xbox_autolaunch[1024];
