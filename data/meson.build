@@ -8,6 +8,7 @@ pfiles = [
   'abxy.ttf',
   'Roboto-Medium.ttf',
   'RobotoCondensed-Regular.ttf',
+  'MPLUS1Code-Medium.ttf',  # XPSemu Chihiro: the arcade front (subset: ASCII, Latin-1, a few kana/kanji)
   'font_awesome_6_1_1_solid.min.otf',  # Update glyphs with scripts/gen-min-fa-font.sh
 ]
 

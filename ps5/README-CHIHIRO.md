@@ -22,6 +22,22 @@ is not touched.
 
 Xbox games work as in XPSemu (MCPX and BIOS in `/data/xemu-chihiro/`).
 
+## The arcade front
+
+The app opens on a game select in the style of SEGA ALL.Net P-ras MULTI
+Ver.3, with the Chihiro games only (`XEMU_ARCADE_UI=0` in env.txt brings
+back the dashboard with the Xbox games). The games are named from the
+ID in their `boot.id`, whatever the file is called, with MAME's names.
+
+- Left / right choose (L1 / R1 five at a time), Cross plays (or goes back
+  to the game running), Circle goes back to the game running, Square ends
+  it, Triangle opens the game's settings (its name, a home screen tile),
+  Options the emulator's settings (L1 / R1 there: Settings, System).
+- Tiles: a picture per game in `/data/xemu-chihiro/arcade/`, `.png` or
+  `.jpg`, named after the game's MAME set (`wangmid2.jpg`) or its name
+  (`Wangan Midnight Maximum Tune 2.png`); a flyer's shape fits best, any
+  size. A game without one shows its name.
+
 ## Switches: /data/xemu-chihiro/env.txt
 
 Written the first time the app starts; NAME=VALUE per line, read at startup.

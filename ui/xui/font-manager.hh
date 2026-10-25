@@ -33,6 +33,8 @@ public:
     ImFont *m_menu_font;
     ImFont *m_menu_font_small;
     ImFont *m_menu_font_medium;
+    // XPSemu Chihiro: the arcade front's monospace (M+ 1 Code Medium, OFL)
+    ImFont *m_arcade_font = nullptr;
     // ImFont *m_big_state_icon_font;
     float m_last_viewport_scale;
     float m_last_pixel_density;

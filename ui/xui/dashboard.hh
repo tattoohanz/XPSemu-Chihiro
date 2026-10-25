@@ -234,6 +234,13 @@ protected:
     uint32_t m_prev_buttons = 0;
     float m_time = 0;
 
+    // XPSemu Chihiro: the arcade front (arcade-layout.hh) in place of the
+    // main menu, the Chihiro games only (XEMU_ARCADE_UI=0 in env.txt: the
+    // dashboard as it was). The settings and system pages are the
+    // dashboard's own.
+    bool m_arcade = false;
+    void DrawArcade(float a);
+
     void ScanGames();
     void HandleInput();
     void HandleInputInner();

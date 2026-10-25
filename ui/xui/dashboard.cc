@@ -45,6 +45,7 @@
 #include "game-profile.hh"
 #include "bc7-encode.h"
 #include "cover-download.hh"
+#include "arcade-layout.hh"
 #include "ui-sounds.hh"
 #include "xiso.hh"
 #include <fpng.h>
@@ -292,6 +293,12 @@ struct GameArt {
     bool back_tried = false, spine_tried = false;
     double part_time = 0;
     double parts_asked = -100; // When the back/spine were asked for
+    // XPSemu Chihiro: the game's ID in its boot.id ("SBKD"), and its tile
+    // for the arcade front (/data/xemu-chihiro/arcade)
+    std::string chihiro_id;
+    XemuTexture tile = 0;
+    bool tile_tried = false;
+    double tile_time = 0;
 };
 
 static std::map<std::string, GameArt> g_art; // By disc image path
@@ -312,8 +319,9 @@ static GameArt &Art(const std::string &path)
 
 struct DecodeJob {
     std::string game_path, file;
-    int max_h, part; // part: CoverPart
+    int max_h, part; // part: CoverPart, or kArcadeTilePart
 };
+static const int kArcadeTilePart = 100; // XPSemu Chihiro: an arcade tile
 struct Decoded {
     DecodeJob job;
     std::vector<uint8_t> rgba;
@@ -412,6 +420,14 @@ static void UploadDecoded()
         GameArt &art = g_art[d.job.game_path];
         XemuTexture tex = d.rgba.empty() ? 0 :
                           xemu_vk_texture_create(d.rgba.data(), d.w, d.h, 4);
+        if (d.job.part == kArcadeTilePart) {
+            art.tile = tex;
+            art.tile_time = ImGui::GetTime();
+            fprintf(stderr, "XPSemu Chihiro: arcade tile %s%s\n",
+                    d.job.file.c_str(),
+                    tex ? "" : " FAILED (not a picture stb_image reads)");
+            continue;
+        }
         if (d.job.part == COVER_FRONT) {
             art.cover = tex;
             art.cover_time = ImGui::GetTime();
@@ -859,12 +875,199 @@ static bool IsChihiroImage(const std::string &path)
     return fatx;
 }
 
+//
+// XPSemu Chihiro: the arcade front's knowledge of the games.
+//
+
+// The Chihiro games: the ID in boot.id (as chihiro.c's chihiro_game_names),
+// MAME's set and its other sets, and the name, maker and year MAME gives
+// them (src/mame/sega/chihiro.cpp).
+struct ChihiroTitle {
+    const char *id, *set, *others, *title, *maker;
+    int year;
+};
+static const ChihiroTitle kChihiroTitles[] = {
+    { "SBFN", "hotd3", "", "The House of the Dead III", "Sega / Wow Entertainment", 2002 },
+    { "SBFY", "crtaxihr", "", "Crazy Taxi High Roller", "Sega / Hitmaker", 2003 },
+    { "SBFZ", "vcop3", "vcop3a", "Virtua Cop 3", "Sega", 2003 },
+    { "SGBZ", "outr2", "", "OutRun 2", "Sega", 2003 },
+    { "SBHC", "mj2", "mj2c mj2f", "Sega Network Taisen Mahjong MJ 2", "Sega", 2004 },
+    { "SBHF", "ollie", "", "Ollie King", "Sega / Amusement Vision", 2003 },
+    { "SBHQ", "wangmid", "wangmidj", "Wangan Midnight Maximum Tune", "Namco", 2004 },
+    { "SBHU", "ghostsqu", "ghostsqo", "Ghost Squad", "Sega", 2004 },
+    { "SBJK", "gundamos", "", "Gundam Battle Operating Simulator", "Banpresto", 2005 },
+    { "SBJE", "outr2st", "outr2stj outr2stjo outr2sto", "OutRun 2 Special Tours", "Sega", 2004 },
+    { "SBKD", "wangmid2", "wangmid2j wangmid2ja wangmid2o", "Wangan Midnight Maximum Tune 2", "Namco", 2005 },
+    { "SBKK", "mj3", "mj3c mj3d", "Sega Network Taisen Mahjong MJ 3", "Sega", 2005 },
+    { "SBLF", "scg06nt", "", "Sega Club Golf 2006 Next Tours", "Sega", 2005 },
+    { "SBME", "mj3evo", "mj3evoa", "Sega Network Taisen Mahjong MJ 3 Evolution", "Sega", 2007 },
+    // No boot.id ID known here: by the file's name only
+    { "", "scg05nt", "scg05ntb", "Sega Golf Club Network Pro Tour 2005", "Sega", 2004 },
+    { "", "questofd", "", "Quest of D", "Sega", 2004 },
+    { "", "gundcb79", "gundcb79a", "Mobile Suit Gundam 0079 Card Builder", "Banpresto", 2005 },
+    { "", "gundcb83", "gundcb83a gundcb83b", "Mobile Suit Gundam 0083 Card Builder", "Banpresto", 2007 },
+    { "", "qofdtbk", "", "Quest of D The Battle Kingdom", "Sega", 2007 },
+};
+
+// The game by its boot.id ID, else by its file's name: a MAME set name, or
+// the game's own name in any spelling CoverKey reduces alike.
+static const ChihiroTitle *ChihiroTitleOf(const std::string &id,
+                                          const std::string &stem)
+{
+    for (const auto &t : kChihiroTitles) {
+        if (!id.empty() && id == t.id) {
+            return &t;
+        }
+    }
+    std::string key = CoverKey(stem);
+    for (const auto &t : kChihiroTitles) {
+        if (key == t.set || key == CoverKey(t.title)) {
+            return &t;
+        }
+        std::string others = t.others;
+        size_t at = 0;
+        while (at < others.size()) {
+            size_t sp = others.find(' ', at);
+            if (sp == std::string::npos) {
+                sp = others.size();
+            }
+            if (key == others.substr(at, sp - at)) {
+                return &t;
+            }
+            at = sp + 1;
+        }
+    }
+    return nullptr;
+}
+
+static uint32_t Le32(const uint8_t *p)
+{
+    return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+// The game's ID in its boot.id (the four characters at 0x30), or "". The
+// kernel finds it in the FATX root directory, which follows the FAT, whose
+// size depends on the media board's size; here the root's entry for boot.id
+// is looked for in the first 16 MB instead, 64-byte entries (name length
+// 7, the name at 2, its first cluster at 0x2C), and its cluster found from
+// where the root's first cluster can start (on a 4 KB boundary, up to eight
+// clusters before the entry, as a root may hold more than one): the one
+// where "BTID" is.
+static std::string ChihiroIdOf(const std::string &path)
+{
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) {
+        return "";
+    }
+    std::string id;
+    uint8_t hdr[16];
+    if (fread(hdr, 1, sizeof(hdr), f) == sizeof(hdr) &&
+        memcmp(hdr, "FATX", 4) == 0) {
+        uint32_t spc = Le32(hdr + 8), root = Le32(hdr + 12);
+        if (spc && spc <= 128 && !(spc & (spc - 1)) && root) {
+            const uint64_t cluster = (uint64_t)spc * 512;
+            const uint64_t before = (uint64_t)(root - 1) * cluster;
+            const size_t chunk = 1 << 20;
+            std::vector<uint8_t> buf(chunk);
+            for (uint64_t base = 4096; base < (16u << 20) && id.empty();
+                 base += chunk) {
+                if (fseeko(f, (off_t)base, SEEK_SET) != 0) {
+                    break;
+                }
+                size_t got = fread(buf.data(), 1, chunk, f);
+                for (size_t i = 0; i + 64 <= got && id.empty(); i += 64) {
+                    const uint8_t *e = &buf[i];
+                    if (e[0] != 7 ||
+                        strncasecmp((const char *)e + 2, "boot.id", 7) != 0) {
+                        continue;
+                    }
+                    uint32_t first = Le32(e + 0x2C);
+                    uint64_t at = base + i;
+                    for (uint64_t r = at & ~4095ull;
+                         first && r >= 4096 + before && r + 8 * cluster > at;
+                         r -= 4096) {
+                        uint64_t data = r - before;
+                        uint8_t bid[0x40];
+                        if (fseeko(f, (off_t)(data + (first - 1) * cluster),
+                                   SEEK_SET) == 0 &&
+                            fread(bid, 1, sizeof(bid), f) == sizeof(bid) &&
+                            memcmp(bid, "BTID", 4) == 0) {
+                            for (int k = 0; k < 4 && isalnum(bid[0x30 + k]); k++) {
+                                id += (char)bid[0x30 + k];
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (got < chunk) {
+                    break;
+                }
+            }
+        }
+    }
+    fclose(f);
+    return id;
+}
+
+// The arcade front's tiles: /data/xemu-chihiro/arcade/<name>.png or .jpg,
+// the name a game's MAME set, its name, or its file's (any spelling
+// CoverKey reduces alike); listed with the games.
+static std::map<std::string, std::string> g_arcade_tiles;
+
+static void ListArcadeTiles()
+{
+    g_arcade_tiles.clear();
+    std::error_code ec;
+    const std::string dir = XEMU_PS5_CHIHIRO_ARCADE_DIR;
+    std::filesystem::create_directories(dir, ec);
+    for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+        std::string ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (entry.is_regular_file(ec) &&
+            (ext == ".png" || ext == ".jpg" || ext == ".jpeg")) {
+            g_arcade_tiles.emplace(CoverKey(entry.path().stem().string()),
+                                   entry.path().string());
+        }
+    }
+    fprintf(stderr, "XPSemu Chihiro: %d arcade tile(s) in %s\n",
+            (int)g_arcade_tiles.size(), dir.c_str());
+}
+
+static XemuTexture ArcadeTile(const DashboardScene::Game &game)
+{
+    GameArt &art = Art(game.path);
+    if (!art.tile_tried) {
+        art.tile_tried = true;
+        const ChihiroTitle *t = ChihiroTitleOf(art.chihiro_id, art.stem);
+        std::vector<std::string> keys = { CoverKey(art.stem), CoverKey(game.name) };
+        if (t) {
+            keys.insert(keys.begin(), { t->set, CoverKey(t->title) });
+        }
+        for (const auto &key : keys) {
+            auto it = g_arcade_tiles.find(key);
+            if (!key.empty() && it != g_arcade_tiles.end()) {
+                DecodeRequest({ game.path, it->second, 1000, kArcadeTilePart });
+                break;
+            }
+        }
+    }
+    return art.tile;
+}
+
 void DashboardScene::ScanGames()
 {
     m_games_sig = GamesSignature();
     LoadGameNames();
     m_games.clear();
     ListCovers();
+    if (m_arcade) {
+        ListArcadeTiles();
+        for (auto &[path, art] : g_art) {
+            if (!art.tile) {
+                art.tile_tried = false; // Added since: looked for again
+            }
+        }
+    }
     for (auto &[path, art] : g_art) {
         if (!art.cover) {
             art.cover_tried = false;
@@ -892,14 +1095,25 @@ void DashboardScene::ScanGames()
                 if (!art.read) {
                     art.read = true;
                     art.stem = path.stem().string();
+                    art.chihiro_id = ChihiroIdOf(path.string());
+                    fprintf(stderr, "XPSemu Chihiro: %s is %s\n",
+                            path.filename().string().c_str(),
+                            art.chihiro_id.empty() ? "a game with no boot.id ID found" :
+                                                     art.chihiro_id.c_str());
                 }
-                m_games.push_back({ CleanName(art.stem), path.string(), 0, false });
+                // Its name as MAME gives it, when the game is known
+                const ChihiroTitle *t = ChihiroTitleOf(art.chihiro_id, art.stem);
+                m_games.push_back({ t ? std::string(t->title) : CleanName(art.stem),
+                                    path.string(), 0, false });
                 m_games.back().chihiro = true;
                 const std::string *own = GameOwnName(KeyOf(m_games.back()));
                 if (own) {
                     m_games.back().name = *own;
                 }
                 continue;
+            }
+            if (m_arcade) {
+                continue; // The arcade front: the Chihiro games only
             }
             if (entry.is_regular_file(ec) && (ext == ".iso" || ext == ".xiso")) {
                 GameArt &art = Art(path.string());
@@ -1589,6 +1803,11 @@ void DashboardScene::Show()
         m_alpha = 0;
     }
     m_startup_show = false;
+    // XPSemu Chihiro: the arcade front, unless env.txt says otherwise.
+    {
+        const char *e = getenv("XEMU_ARCADE_UI");
+        m_arcade = !e || e[0] != '0';
+    }
     if (!m_recent_loaded) {
         LoadRecent();
     }
@@ -1637,7 +1856,8 @@ void DashboardScene::Show()
         UiMusicPrepare();
         // The logo first (the music after it), else the music a little in.
         // Not until the Xbox's files are there: the checklist first.
-        m_boot = g_config.display.ui.boot_logo && !m_setup;
+        // (Not with the arcade front: the logo is the Xbox dashboard's.)
+        m_boot = g_config.display.ui.boot_logo && !m_setup && !m_arcade;
         m_boot_t = 0;
         m_music_at = m_boot ? -1 : m_time + 3.5f;
         if (m_boot || m_setup) {
@@ -3497,6 +3717,39 @@ void DashboardScene::HandleInputInner()
         m_eject_ask = -1; // Anything else: not ejecting
     }
 
+    if (m_arcade && !m_in_page) {
+        // XPSemu Chihiro: the arcade front. Left and right (L1, R1 five
+        // at a time) choose, Cross plays (or goes back to the game running),
+        // Triangle opens the game's settings, Options the emulator's,
+        // Circle goes back to the game running (Square ends it, above).
+        int n = m_games.size();
+        bool start = ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false);
+        if (back) {
+            Close();
+            return;
+        }
+        if (start) {
+            m_page = PAGE_SETTINGS;
+            m_in_page = true;
+            m_settings_cat = -1;
+            return;
+        }
+        if (!n) {
+            return;
+        }
+        if (left) m_game = std::max(m_game - 1, 0);
+        if (right) m_game = std::min(m_game + 1, n - 1);
+        if (l1) m_game = std::max(m_game - 5, 0);
+        if (r1) m_game = std::min(m_game + 5, n - 1);
+        if (accept) {
+            CurtainFrom(m_sel0, m_sel1); // The tile it starts from
+            Launch(m_games[m_game]);
+        } else if (options) {
+            OpenGameSettings(m_games[m_game], true);
+        }
+        return;
+    }
+
     if (!m_in_page && m_np_focus) { // Now Playing, above the menu
         if (!NowPlayingGame() || down || m_park.active) {
             m_np_focus = false;
@@ -3666,6 +3919,17 @@ void DashboardScene::HandleInputInner()
         } else {
             m_in_page = false;
         }
+        return;
+    }
+
+    // XPSemu Chihiro: the arcade front has no main menu; L1 and R1 go
+    // between Settings and System instead.
+    if (m_arcade && (l1 || r1) && !m_gs_open &&
+        ((m_page == PAGE_SETTINGS && m_settings_cat < 0 && !m_advanced &&
+          !m_pad_page && !m_all_page) ||
+         m_page == PAGE_SYSTEM)) {
+        m_page = m_page == PAGE_SETTINGS ? PAGE_SYSTEM : PAGE_SETTINGS;
+        m_sys_ask = -1;
         return;
     }
 
@@ -3957,7 +4221,7 @@ bool DashboardScene::Draw()
     if (false && m_badge_next >= 0) { // No badges on the covers now
         PatchBadgeStep();
     }
-    bool attract = UpdateAttract(dt);
+    bool attract = m_arcade ? false : UpdateAttract(dt);
     if (m_pad_capture) {
         PadCapture(); // Waiting for a DualSense button: nothing else
     } else if (m_visible && !attract && !m_boot) {
@@ -4013,7 +4277,21 @@ bool DashboardScene::Draw()
                              10);
 
 
-    DrawBackground(s);
+    if (m_arcade && !m_setup) {
+        // XPSemu Chihiro: the arcade front, a page fading in over it on
+        // the dashboard's own ground.
+        if (m_page_anim < 0.99f) {
+            DrawArcade(m_alpha * (1 - m_page_anim));
+        }
+        if (m_page_anim > 0.01f) {
+            float keep = m_alpha;
+            m_alpha = keep * m_page_anim;
+            DrawBackground(s);
+            m_alpha = keep;
+        }
+    } else {
+        DrawBackground(s);
+    }
     if (m_setup) {
         DrawSetup(s, m_alpha);
         DrawHints(s);
@@ -4022,7 +4300,7 @@ bool DashboardScene::Draw()
         return true;
     }
     // The main menu slides out to the left as a page slides in.
-    if (m_page_anim < 0.99f) {
+    if (!m_arcade && m_page_anim < 0.99f) {
         DrawMainMenu(s, m_alpha * (1 - m_page_anim));
     }
     if (m_page_anim > 0.01f) {
@@ -4049,9 +4327,11 @@ bool DashboardScene::Draw()
         case PAGE_SYSTEM: DrawSystem(s, a); break;
         }
     }
-    DrawHints(s);
-    DrawStatus(s);
-    if (m_attract_alpha > 0.01f) {
+    if (!m_arcade || m_page_anim > 0.5f) { // The front has its own
+        DrawHints(s);
+        DrawStatus(s);
+    }
+    if (!m_arcade && m_attract_alpha > 0.01f) {
         DrawAttract(s, m_alpha * m_attract_alpha);
     }
 
@@ -4199,6 +4479,59 @@ void DashboardScene::DrawOrb(float cx, float cy, float r)
                         r * 0.03f * (1 + (z + 1) / 2));
         }
     }
+}
+
+// XPSemu Chihiro: the arcade front (arcade-layout.cc) for the games here;
+// the row glides on the Games carousel's spring (m_game_anim).
+void DashboardScene::DrawArcade(float a)
+{
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 size = ImGui::GetIO().DisplaySize;
+    // At startup: black over the Xbox's screen first, the front over it.
+    if (m_startup_fade) {
+        dl->AddRectFilled(ImVec2(0, 0), size, Rgba(0, 0, 0, m_startup_black));
+    }
+    ArcadeFrame f;
+    f.font = g_font_mgr.m_arcade_font;
+    f.alpha = a;
+    f.time = m_time;
+    f.selected = m_game;
+    f.scroll = m_game_anim;
+    time_t now = time(NULL);
+    struct tm lt;
+    if (localtime_r(&now, &lt)) {
+        char clock[16];
+        strftime(clock, sizeof(clock), "%H:%M", &lt);
+        f.clock = clock;
+    }
+    const Game *playing = NowPlayingGame();
+    double t = ImGui::GetTime();
+    for (const auto &g : m_games) {
+        ArcadeGame ag;
+        ag.title = g.name;
+        const GameArt &art = Art(g.path);
+        if (const ChihiroTitle *ct = ChihiroTitleOf(art.chihiro_id, art.stem)) {
+            ag.info = std::string(ct->maker) + "  \xC2\xB7  " +
+                      std::to_string(ct->year);
+        }
+        if (XemuTexture tex = ArcadeTile(g)) {
+            int w = 1, h = 1;
+            xemu_vk_texture_get_size(tex, &w, &h);
+            ag.art.tex = (ImTextureID)tex;
+            ag.art.w = (float)w;
+            ag.art.h = (float)h;
+            ag.art.fade = std::clamp((float)(t - art.tile_time) / 0.35f, 0.0f, 1.0f);
+        }
+        ag.running = playing && playing->path == g.path;
+        f.games.push_back(std::move(ag));
+    }
+    if (m_games.empty()) {
+        f.empty = "Put your Chihiro netboot images (.bin) in "
+                  "/data/xemu-chihiro/games";
+    }
+    ArcadeDraw(dl, f, size);
+    // The middle tile's box, where a game's start animation begins
+    ArcadeMiddleTile(size, &m_sel0, &m_sel1);
 }
 
 void DashboardScene::DrawMainMenu(float s, float a)

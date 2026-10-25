@@ -29,6 +29,8 @@
 /* Environment switches read at startup (NAME=VALUE per line): the
  * XEMU_WM1_*, XEMU_WM2_* and XEMU_WS_HACK of the desktop build's .bat. */
 #define XEMU_PS5_ENV_FILE XEMU_PS5_DATA_DIR "/env.txt"
+/* The arcade front's tiles (ui/xui/dashboard.cc, ListArcadeTiles). */
+#define XEMU_PS5_CHIHIRO_ARCADE_DIR XEMU_PS5_DATA_DIR "/arcade"
 /* One-shot: the dashboard writes the Chihiro image to boot here, then
  * restarts the app; startup takes it and deletes the file. */
 #define XEMU_PS5_CHIHIRO_BOOT_FILE XEMU_PS5_DATA_DIR "/chihiro-boot.txt"

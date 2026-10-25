@@ -24,6 +24,7 @@
 
 #include "data/Roboto-Medium.ttf.h"
 #include "data/RobotoCondensed-Regular.ttf.h"
+#include "data/MPLUS1Code-Medium.ttf.h"
 #include "data/font_awesome_6_1_1_solid.min.otf.h"
 #include "data/abxy.ttf.h"
 
@@ -92,6 +93,21 @@ void FontManager::Rebuild()
                                        font_awesome_6_1_1_solid_min_size,
                                        18.0f * scale,
                                        &config, icon_ranges);
+    }
+    {
+        // XPSemu Chihiro: the arcade front (arcade-layout.cc), baked large
+        // as its biggest text is drawn; the subset has ASCII, Latin-1 and
+        // the few kana and kanji it uses.
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        config.RasterizerDensity = pixel_density;
+        static const ImWchar arcade_ranges[] = {
+            0x0020, 0x00FF, 0x30C1, 0x30C1, 0x30FB, 0x30FB, 0x4E2D, 0x4E2D,
+            0x50CD, 0x50CD, 0x7A3C, 0x7A3C, 0
+        };
+        m_arcade_font = io.Fonts->AddFontFromMemoryTTF(
+            (void *)MPLUS1Code_Medium_data, MPLUS1Code_Medium_size,
+            46.0f * scale, &config, arcade_ranges);
     }
     {
         ImFontConfig config = ImFontConfig();
