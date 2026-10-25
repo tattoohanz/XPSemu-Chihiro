@@ -42,24 +42,27 @@ bool xemu_get_widescreen(void)
 static bool g_ws_checked;
 static float g_ws_scale = 1.0f;
 static bool g_ws_2d_only;
-static bool g_ws_cpu_only;
+static int g_ws_cpu_mode;
 
 static void xemu_ws_check(void)
 {
     const char *e = getenv("XEMU_WS_HACK");
 
     g_ws_checked = true;
-    if (e && (e[0] == '1' || e[0] == '2' || e[0] == '3')) {
+    if (e && e[0] >= '1' && e[0] <= '4') {
         g_ws_scale = (4.0f / 3.0f) / (16.0f / 9.0f);   /* 0.75 */
         g_ws_2d_only = e[0] == '2';
-        g_ws_cpu_only = e[0] == '3';
+        g_ws_cpu_mode = e[0] >= '3' ? e[0] - '0' : 0;
         fprintf(stderr, "xemu: widescreen hack: clip x * %.3f, %s\n",
                 g_ws_scale, g_ws_2d_only ?
                     "the 2D only (programmable shaders; the 3D as the game "
                     "draws it)" :
-                g_ws_cpu_only ?
+                g_ws_cpu_mode == 3 ?
                     "the HUD only, by the CPU (the 2D over a copied 3D "
                     "scene; no shader scaled)" :
+                g_ws_cpu_mode == 4 ?
+                    "the HUD only, by the CPU (the 2D after the last pass "
+                    "over the 3D; no shader scaled)" :
                     "every draw");
     }
 }
@@ -82,8 +85,13 @@ bool xemu_get_ws_2d_only(void)
 
 bool xemu_get_ws_cpu_only(void)
 {
+    return xemu_get_ws_cpu_mode() != 0;
+}
+
+int xemu_get_ws_cpu_mode(void)
+{
     if (!g_ws_checked) {
         xemu_ws_check();
     }
-    return g_ws_cpu_only;
+    return g_ws_cpu_mode;
 }

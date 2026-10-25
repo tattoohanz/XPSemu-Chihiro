@@ -61,9 +61,9 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   so `2` would narrow its 3D). Off by default.
 - `XEMU_OUTRUN2_WIDESCREEN=1`: OutRun 2 and OutRun 2 SP draw 16:9
   themselves (the camera's aspect, in memory: the same height, wider sides,
-  the culling with it). Give them the 16:9 screen shape. Their HUD stays
-  stretched for now (their 3D uses programmable shaders, so not
-  `XEMU_WS_HACK=2`). Off by default.
+  the culling with it). Give them the 16:9 screen shape and
+  `XEMU_WS_HACK=4` for their HUD (their 3D uses programmable shaders, so
+  not `2`). Their menus stay as the game draws them. Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
@@ -75,6 +75,9 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   2D drawn over the 3D scene once the game copies the scene to the screen,
   narrowed to 4:3 and out to the 16:9 edges (Ollie King, `[ollie]` with
   `XEMU_OLLIE_WIDESCREEN=1`); its menus stay as the game draws them.
+  `XEMU_WS_HACK=4` does the same for the 2D drawn after the game's last
+  full-screen pass over its 3D (OutRun 2 / SP, `[outr2]` / `[outr2st]`
+  with `XEMU_OUTRUN2_WIDESCREEN=1`).
 - `XEMU_DEPTH_READ_LAG`, `XEMU_ZETA_REUSE_LARGER`, `XEMU_CUBE_FROM_SURFACES`,
   `XEMU_GPU_BLIT`: PS5 speed-ups, on by default; 0 does it as XPSemu does.
 - `XEMU_CHIHIRO_FFB=100`: the drive board's force feedback as DualSense

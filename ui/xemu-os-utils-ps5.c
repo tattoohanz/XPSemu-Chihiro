@@ -853,7 +853,7 @@ static const char kEnvTemplate[] =
     "XEMU_OLLIE_WIDESCREEN=0\n"
     "#\n"
     "# OutRun 2 and OutRun 2 SP: the same, their camera 16:9 (in memory;\n"
-    "# 0 = 4:3). Their HUD stays stretched for now.\n"
+    "# 0 = 4:3), with XEMU_WS_HACK=4 for their HUD.\n"
     "XEMU_OUTRUN2_WIDESCREEN=0\n"
     "#\n"
     "# 16:9 widescreen for the Chihiro games (1 = on); set the screen shape\n"
@@ -864,6 +864,7 @@ static const char kEnvTemplate[] =
     "# with XEMU_WM*_WIDESCREEN=1): set it for that game alone (below).\n"
     "# 3 = the HUD only, moved on the CPU, for Ollie King with\n"
     "# XEMU_OLLIE_WIDESCREEN=1 (its 3D uses programmable shaders too).\n"
+    "# 4 = the same for OutRun 2 / SP with XEMU_OUTRUN2_WIDESCREEN=1.\n"
     "XEMU_WS_HACK=0\n"
     "XEMU_WS_COPY=1\n"
     "XEMU_WS_HUD=1\n"
@@ -921,7 +922,10 @@ static const char kEnvTemplate[] =
     "#XEMU_WS_HACK=2\n"
     "#[ollie]\n"
     "#XEMU_OLLIE_WIDESCREEN=1\n"
-    "#XEMU_WS_HACK=3\n";
+    "#XEMU_WS_HACK=3\n"
+    "#[outr2st]\n"
+    "#XEMU_OUTRUN2_WIDESCREEN=1\n"
+    "#XEMU_WS_HACK=4\n";
 
 /*
  * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set

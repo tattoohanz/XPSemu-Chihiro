@@ -55,8 +55,13 @@ bool xemu_get_ws_2d_only(void);
  * scene was copied onto it (Ollie King: its scene, 3D characters drawn with
  * programmable shaders among it, is copied to the screen and the HUD drawn
  * over it), while a game patch makes the 3D 16:9 itself
- * (XEMU_OLLIE_WIDESCREEN=1). */
+ * (XEMU_OLLIE_WIDESCREEN=1). XEMU_WS_HACK=4: the same, the HUD being the 2D
+ * drawn after the game's last full-screen pass over the 3D on the screen
+ * surface itself (OutRun 2 / SP: their bloom composite; with
+ * XEMU_OUTRUN2_WIDESCREEN=1). */
 bool xemu_get_ws_cpu_only(void);
+/* 3 or 4 as above, else 0 */
+int xemu_get_ws_cpu_mode(void);
 
 #ifdef __cplusplus
 }

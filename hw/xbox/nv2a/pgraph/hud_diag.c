@@ -67,12 +67,20 @@
  * copy of a surface that took FF draws this frame onto one that took none
  * marks that one as the frame's HUD layer; the 2D drawn on it afterwards is
  * narrowed by ws around the centre on the CPU and, by the same side rules,
- * moved to its 16:9 edge. A glyph on the line of an element with the same
- * texture and program, within a tenth of the width, takes that element's
- * side (strings drawn out of order). A frame whose 2D there covered 90% of
+ * moved to its 16:9 edge. A glyph on the line of an element moved to a
+ * side, with the same texture and program, within a tenth of the width,
+ * takes that side when its centre is in that side's 40% (strings drawn out
+ * of order).
+ * XEMU_WS_HACK=4 (OutRun 2 / SP, 3D on the screen surface itself): the
+ * layer is marked by a full-screen pass from a render target onto a surface
+ * the size of the TV picture that already took 3D this frame (FF, or a
+ * programmable draw of more than 256 vertices from memory), and unmarked by
+ * more such 3D on it: the HUD is what follows the last pass (the bloom
+ * composite); other full-screen pictures leave it marked and stay as drawn.
+ * A frame whose 2D there covered 90% of
  * the screen or more (a results screen over the scene) makes the next one
- * keep it all whole, 4:3 in the centre. Menus, which compose elsewhere and
- * copy that, stay as the game draws them.
+ * keep it all whole, 4:3 in the centre. Menus (2D screens with no 3D, or
+ * composed elsewhere and copied) stay as the game draws them.
  */
 
 #include "qemu/osdep.h"
@@ -188,7 +196,9 @@ bool pgraph_hud_ws_active;
 static struct {
     bool init;
     bool copy_on, hud_on, clip_on, menubg_on;
-    bool cpu;                  /* XEMU_WS_HACK=3: the HUD moved on the CPU only */
+    bool cpu;                  /* XEMU_WS_HACK=3/4: the HUD moved on the CPU */
+    bool cpu4;                 /* 4: the HUD layer is the 3D's own surface */
+    unsigned int disp_w, disp_h; /* the TV picture, from the last flip */
     float ws;
     uint32_t rt[16];           /* surfaces rendered to so far */
     unsigned int n_rt, rt_next;
@@ -208,7 +218,9 @@ static struct {
     uint32_t s43[8];           /* surfaces that were a 2D screen last frame */
     unsigned int n_s43;
     uint32_t hud[8];           /* surfaces the 3D scene was copied onto this */
-    unsigned int n_hud;        /*    frame (XEMU_WS_HACK=3) */
+    unsigned int n_hud;        /*    frame (XEMU_WS_HACK=3/4) */
+    uint32_t big3d[8];         /* surfaces with a large programmable draw */
+    unsigned int n_big3d;      /*    from memory this frame (4) */
     float hud_cover;           /* ...the share of the screen their 2D covers */
     bool layout;               /* last frame's covered most of it: a screen */
     float last_cover;          /* for the log: the frame that just ended */
@@ -974,15 +986,19 @@ static void hd_init(void)
         "after a frame with a backdrop and no anchored HUD)\n"
         "# 16:9 menu background: %s (ws=wide: full-width layer stretched, "
         "after an untextured backdrop)\n"
-        "# HUD layer: %s (XEMU_WS_HACK=3, no shader scaled: ws=hud: a "
+        "# HUD layer: %s (XEMU_WS_HACK=3/4, no shader scaled: ws=hud: 3: a "
         "full-screen copy of a surface with FF draws this frame onto one "
-        "without; the 2D after it there is narrowed by ws around the centre, "
-        "ws=C, or narrowed and moved to its edge, ws=L/R; a glyph on the "
-        "line of an element of the same texture within W/10 takes its "
-        "side; after a frame whose 2D there covered 90%% or more, all "
-        "ws=C)\n",
+        "without; 4: a full-screen pass from a render target onto a "
+        "TV-sized surface after 3D on it, undone by more 3D there; the 2D "
+        "after it there is narrowed by ws around the centre, ws=C, or "
+        "narrowed and moved to its edge, ws=L/R; a glyph on the line of an "
+        "element moved to a side, same texture, within W/10, takes its "
+        "side if its centre is in that side's 40%%; after a frame whose 2D "
+        "there covered 90%% or more, all ws=C)\n",
         ws, xemu_get_ws_2d_only() ? " (2D only: FF draws unscaled)" :
-            xemu_get_ws_cpu_only() ? " (HUD only, by the CPU)" : "",
+            xemu_get_ws_cpu_mode() == 3 ? " (HUD only, by the CPU, mode 3)" :
+            xemu_get_ws_cpu_mode() == 4 ? " (HUD only, by the CPU, mode 4)" :
+                                          "",
         hd.every, hd.max_frames, ws,
         pgraph_hud_ws_active && hw.copy_on ? "on" : "off",
         pgraph_hud_ws_active && hw.hud_on ? "on" : "off",
@@ -1372,6 +1388,7 @@ static void hw_init(void)
     /* XEMU_WS_HACK=3 scales no shader: the copy-pass fix, the 4:3 clip and
      * the menu background would only undo or cut a picture drawn 1:1 */
     hw.cpu = xemu_get_ws_cpu_only();
+    hw.cpu4 = xemu_get_ws_cpu_mode() == 4;
     if (hw.cpu) {
         hw.copy_on = false;
         hw.clip_on = false;
@@ -1450,6 +1467,7 @@ static void hw_note_rt(uint32_t off)
 }
 
 #define HW_SCREEN_MIN_DRAWS 4u
+#define HW_BIG_3D_VERTS     256u
 
 static void hw_frame_reset(void)
 {
@@ -1481,6 +1499,7 @@ static void hw_frame_reset(void)
     hw.n_phase = 0;
     hw.n_anch = 0;
     hw.n_hud = 0;
+    hw.n_big3d = 0;
     /* XEMU_WS_HACK=3: 2D over most of the scene is a layout, not a HUD
      * (Ollie King's results cover over 100%, its race HUD with a popup
      * under 75%): the next frame keeps it whole, 4:3 in the centre */
@@ -1597,9 +1616,26 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
         /* fixed function is the 3D scene in these titles */
         if (cw) {
             hw_add(hw.scene, &hw.n_scene, ARRAY_SIZE(hw.scene), surf);
+            if (hw.cpu4) {
+                hw_take(hw.hud, &hw.n_hud, surf);
+            }
         }
         hw.run.valid = false;
         return;
+    }
+    /* XEMU_WS_HACK=4: a large programmable draw from memory is the 3D (the
+     * lens flare's few small ones, after the last pass, are not); 3D after
+     * a full-screen pass means that pass was not the last one */
+    if (hw.cpu4 && cw && mode == 2 &&
+        (pg->draw_arrays_length || pg->inline_elements_length)) {
+        size_t nv = pg->inline_elements_length;
+        for (unsigned int i = 0; i < pg->draw_arrays_length; i++) {
+            nv += (size_t)MAX(pg->draw_arrays_count[i], 0);
+        }
+        if (nv > HW_BIG_3D_VERTS) {
+            hw_add(hw.big3d, &hw.n_big3d, ARRAY_SIZE(hw.big3d), surf);
+            hw_take(hw.hud, &hw.n_hud, surf);
+        }
     }
 
     bool tex_on = pgraph_reg_r(pg, NV_PGRAPH_TEXCTL0_0) &
@@ -1711,6 +1747,25 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
      * draw there (a menu's copy, a fade) ends it for the frame. Nothing else
      * is changed: no shader is scaled, the 3D is 16:9 by the game's patch. */
     if (hw.cpu) {
+        if (full_w && full_h && hw.cpu4) {
+            /* 4: a full-screen pass from a render target onto a surface the
+             * size of the TV picture, after 3D on it this frame: if no 3D
+             * follows, the 2D after it is the HUD. Another full-screen
+             * picture over it (a flash, the start's zoom) stays as drawn. */
+            hw.run.valid = false;
+            if (tex_rt) {
+                if (fabsf(W - (float)hw.disp_w) < 0.5f &&
+                    fabsf(H - (float)hw.disp_h) < 0.5f &&
+                    (hw_has(hw.scene, hw.n_scene, surf) ||
+                     hw_has(hw.big3d, hw.n_big3d, surf))) {
+                    hw_add(hw.hud, &hw.n_hud, ARRAY_SIZE(hw.hud), surf);
+                    hd.ws_action = HD_WS_HUD;
+                } else {
+                    hw_take(hw.hud, &hw.n_hud, surf);
+                }
+            }
+            return;
+        }
         if (full_w && full_h) {
             hw.run.valid = false;
             if (tex_rt && hw_has(hw.scene, hw.n_scene, t0) &&
@@ -1855,19 +1910,26 @@ side:;
             inside = true;
             break;
         }
-        /* XEMU_WS_HACK=3: the next glyph on the same line, same texture
-         * and program, beside it within a tenth of the width (Ollie King's
-         * "Total" time draws its colons first, then the digits between) */
-        if (hw.cpu && hw.anch[i].surf == surf && hw.anch[i].t0 == t0 &&
-            hw.anch[i].prog == prog->hash) {
-            float oy = fminf(y1, hw.anch[i].y1) - fmaxf(y0, hw.anch[i].y0);
-            float gap = fmaxf(hw.anch[i].x0 - x1, x0 - hw.anch[i].x1);
-            if (oy >= 0.5f * fminf(y1 - y0, hw.anch[i].y1 - hw.anch[i].y0) &&
-                gap >= -2.0f && gap <= 0.1f * W) {
-                side = hw.anch[i].side;
-                inside = true;
-                break;
-            }
+    }
+    /* XEMU_WS_HACK=3/4: the next glyph on the line of an element moved to a
+     * side, same texture and program, beside it within a tenth of the
+     * width, takes that side if its own centre is in that side's 40%
+     * (Ollie King's "Total" time draws its colons first, then the digits
+     * between; OutRun's "Time" box, at the centre, stays there) */
+    float cx = 0.5f * (x0 + x1);
+    for (unsigned int i = hw.n_anch; hw.cpu && !inside && i-- > 0;) {
+        if (hw.anch[i].surf != surf || hw.anch[i].t0 != t0 ||
+            hw.anch[i].prog != prog->hash || hw.anch[i].side == 0 ||
+            (hw.anch[i].side < 0 ? cx >= 0.4f * W : cx <= 0.6f * W)) {
+            continue;
+        }
+        float oy = fminf(y1, hw.anch[i].y1) - fmaxf(y0, hw.anch[i].y0);
+        float gap = fmaxf(hw.anch[i].x0 - x1, x0 - hw.anch[i].x1);
+        if (oy >= 0.5f * fminf(y1 - y0, hw.anch[i].y1 - hw.anch[i].y0) &&
+            gap >= -2.0f && gap <= 0.1f * W) {
+            side = hw.anch[i].side;
+            inside = true;
+            break;
         }
     }
     bool cont = hw.run.valid && hw.run.surf == surf && hw.run.t0 == t0 &&
@@ -2044,12 +2106,16 @@ bool pgraph_hud_ws_clear(NV2AState *d, uint32_t parameter)
 
 void pgraph_hud_diag_flip(NV2AState *d)
 {
-    (void)d;
-
     if (!hw.init) {
         hw_init();
     }
     hw_frame_reset();
+    if (hw.cpu4) {
+        int w = 0, h = 0;
+        d->vga.get_resolution(&d->vga, &w, &h);
+        hw.disp_w = w > 0 ? (unsigned int)w : 0;
+        hw.disp_h = h > 0 ? (unsigned int)h : 0;
+    }
     if (!hd.init) {
         hd_init();
     }
