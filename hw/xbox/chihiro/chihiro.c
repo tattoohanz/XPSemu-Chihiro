@@ -21,6 +21,7 @@
 
 #include "qemu/osdep.h"
 #include <glib/gstdio.h>
+#include <math.h>
 #include "hw/hw.h"
 #include "hw/irq.h"
 #include "hw/isa/isa.h"
@@ -213,6 +214,8 @@ static void chihiro_patch_wm2_blackbird_rival(void);
 static void chihiro_patch_wm1(void);
 static void chihiro_patch_wm2_special(void);
 static void chihiro_patch_wm2_kijima(void);
+static void chihiro_wm_ws_check(void);
+static void chihiro_wm_ws_tick(void);
 static bool chihiro_mbcom_bootstrap_done; /* Reset on QuickReboot so game gets fresh DIMM_SIZE */
 static bool chihiro_e1_armed; /* Reset on QuickReboot to prevent premature response delivery */
 char chihiro_game_filename[64]; /* set by chihiro_set_game_executable */
@@ -675,6 +678,7 @@ void chihiro_on_ohci_bus_start(void)
             chihiro_patch_wm1();
             chihiro_patch_wm2_special();
             chihiro_patch_wm2_kijima();
+            chihiro_wm_ws_check();
         }
         if (game_mode_bus_starts >= 2) {
             fprintf(stderr, "[%07lld] QUICKREBOOT (BUS START #%d in game mode)\n",
@@ -1491,6 +1495,7 @@ static void chihiro_diag_timer_cb(void *opaque)
         if (chihiro_hw210_enabled)
             chihiro_card_reader_tick();
         chihiro_backup_tick();
+        chihiro_wm_ws_tick();
         timer_mod(s->diag_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
         return;
     }
@@ -3190,6 +3195,216 @@ static void chihiro_patch_wm2_kijima(void)
                         wm2_kijima, ARRAY_SIZE(wm2_kijima), "WM2 KIJIMA",
                         "Kijima races the yellow 38RS (stage keys 0x57, 0x58, "
                         "rival 0x23 -> 0x22)");
+}
+
+/* Maximum Tune 1/2 EXPORT widescreen, step 1: log only, nothing is written.
+ * The game's camera (a wrapper around RenderWare's RwCamera: frame buffer
+ * raster at +0x60, view window at +0x68) sets the view window each frame
+ * from its field of view and aspect (mulss at V322 0x5E8DE, V307 0x78C78):
+ *   x = fov * 1/90, y = x / aspect
+ * and the aspect is the constructor's 4/3 (V322 0x5E798, V307 0x78B48).
+ * Each of the two constants has that one reader in the game. A patch would
+ * put 16/9 and 1/67.5 there: x grows by 4/3 and y stays (Hor+), and
+ * RenderWare builds its frustum, which culls, from the same window, so the
+ * sides get drawn rather than just uncovered. The main camera is a global
+ * (V322 0x31A910, V307 0x234820), applied to the screen's RwCamera; the
+ * mirror has its own camera, from the same constructor, on a 256x128
+ * raster. This checks the constants once, then logs both cameras at most
+ * every 2 s while something changes, to see on the console which camera
+ * draws what. */
+typedef struct {
+    const char *xbe;
+    uint32_t    region_va;      /* 2: export */
+    uint32_t    aspect_va;      /* 4/3 */
+    uint32_t    scale_va;       /* 1/90 */
+    uint32_t    main_cam;       /* the game's main camera */
+    uint32_t    screen_rw_ptr;  /* -> the screen's RwCamera */
+    uint32_t    mirror_cam_ptr; /* -> the mirror's camera */
+    uint32_t    mirror_rw_ptr;  /* -> the mirror's RwCamera */
+    const char *tag;
+} ChihiroWmCameras;
+
+static const ChihiroWmCameras chihiro_wm_cameras[] = {
+    { "V322.xbe", WM2_REGION_VA, 0x001FA480u, 0x001FA48Cu, 0x0031A910u,
+      0x002A8488u, 0x0031E8F8u, 0x0031E8F4u, "WM2" },
+    { "V307.xbe", WM1_REGION_VA, 0x001B6618u, 0x001B6620u, 0x00234820u,
+      0x00247930u, 0x0022DFBCu, 0x0022DFB8u, "WM1" },
+};
+
+#define CHIHIRO_WM_ASPECT_43  0x3FAAAAABu   /* 4/3 */
+#define CHIHIRO_WM_SCALE_90   0x3C360B61u   /* 1/90 */
+#define CHIHIRO_WM_ASPECT_169 0x3FE38E39u   /* 16/9 */
+#define CHIHIRO_WM_SCALE_675  0x3C72B9D6u   /* 1/67.5 */
+#define CHIHIRO_WM_LOG_EVERY  2000          /* ms */
+#define CHIHIRO_WM_LOG_LINES  120
+
+typedef struct {
+    bool     cam;               /* the camera could be read */
+    float    fov, aspect;
+    bool     rw;                /* its RwCamera could be read */
+    uint32_t rw_va;
+    float    wx, wy;
+    int32_t  w, h;              /* its raster, 0 if none */
+} ChihiroWmCamView;
+
+static const ChihiroWmCameras *chihiro_wm_game;
+static ChihiroWmCamView chihiro_wm_last[2];
+static int64_t chihiro_wm_last_ms;
+static int chihiro_wm_lines;
+
+static float chihiro_ldf(const uint8_t *p)
+{
+    uint32_t u = ldl_le_p(p);
+    float f;
+
+    memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+static void chihiro_wm_view(uint32_t cam, uint32_t rw, ChihiroWmCamView *v)
+{
+    uint8_t c[8], r[16], ras[8];
+    uint32_t raster;
+
+    memset(v, 0, sizeof(*v));
+    if (cam && chihiro_guest_rw(cam + 0x28, c, sizeof(c), false)) {
+        v->cam = true;
+        v->fov = chihiro_ldf(c);
+        v->aspect = chihiro_ldf(c + 4);
+    }
+    if (!rw || !chihiro_guest_rw(rw + 0x60, r, sizeof(r), false)) {
+        return;
+    }
+    v->rw = true;
+    v->rw_va = rw;
+    v->wx = chihiro_ldf(r + 8);
+    v->wy = chihiro_ldf(r + 12);
+    raster = ldl_le_p(r);
+    if (raster && chihiro_guest_rw(raster + 0x0C, ras, sizeof(ras), false)) {
+        v->w = (int32_t)ldl_le_p(ras);
+        v->h = (int32_t)ldl_le_p(ras + 4);
+    }
+}
+
+static bool chihiro_wm_view_same(const ChihiroWmCamView *a,
+                                 const ChihiroWmCamView *b)
+{
+    return a->cam == b->cam && a->rw == b->rw && a->rw_va == b->rw_va &&
+           a->w == b->w && a->h == b->h &&
+           fabsf(a->fov - b->fov) < 0.01f &&
+           fabsf(a->aspect - b->aspect) < 0.0001f &&
+           fabsf(a->wx - b->wx) < 0.0001f && fabsf(a->wy - b->wy) < 0.0001f;
+}
+
+static int chihiro_wm_view_str(char *out, size_t n, const char *name,
+                               const ChihiroWmCamView *v)
+{
+    int len = snprintf(out, n, "%s", name);
+
+    if (v->cam) {
+        len += snprintf(out + len, n - len, " fov %.2f aspect %.4f "
+                        "(window %.4f x %.4f)", v->fov, v->aspect,
+                        v->fov / 90.0f, v->fov / 90.0f / v->aspect);
+    } else {
+        len += snprintf(out + len, n - len, " camera none");
+    }
+    if (v->rw) {
+        len += snprintf(out + len, n - len, ", RwCamera %08X window %.4f x "
+                        "%.4f raster %dx%d", v->rw_va, v->wx, v->wy, v->w,
+                        v->h);
+    } else {
+        len += snprintf(out + len, n - len, ", RwCamera none");
+    }
+    return len;
+}
+
+static void chihiro_wm_ws_check(void)
+{
+    const char *base = chihiro_game_filename;
+    const ChihiroWmCameras *g = NULL;
+    uint8_t reg[4], a[4], k[4];
+
+    chihiro_wm_game = NULL;
+    chihiro_wm_lines = 0;
+    chihiro_wm_last_ms = 0;
+    memset(chihiro_wm_last, 0, sizeof(chihiro_wm_last));
+    for (const char *c = chihiro_game_filename; *c; c++) {
+        if (*c == '\\' || *c == '/') {
+            base = c + 1;
+        }
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(chihiro_wm_cameras); i++) {
+        if (g_ascii_strcasecmp(base, chihiro_wm_cameras[i].xbe) == 0) {
+            g = &chihiro_wm_cameras[i];
+        }
+    }
+    if (!g) {
+        return;
+    }
+    if (!chihiro_guest_rw(g->region_va, reg, sizeof(reg), false) ||
+        !chihiro_guest_rw(g->aspect_va, a, sizeof(a), false) ||
+        !chihiro_guest_rw(g->scale_va, k, sizeof(k), false)) {
+        fprintf(stderr, "Chihiro: %s widescreen (log only): %s is not mapped "
+                "yet\n", g->tag, g->xbe);
+        return;
+    }
+    if (ldl_le_p(reg) != 2) {
+        fprintf(stderr, "Chihiro: %s widescreen (log only): region word %u, "
+                "not the export build, left alone\n", g->tag, ldl_le_p(reg));
+        return;
+    }
+    fprintf(stderr, "Chihiro: %s widescreen (log only): %08X aspect %.4f "
+            "(%08X, %s), %08X fov scale %.6f (%08X, %s); a patch would write "
+            "%08X (16/9) and %08X (1/67.5)\n", g->tag,
+            g->aspect_va, chihiro_ldf(a), ldl_le_p(a),
+            ldl_le_p(a) == CHIHIRO_WM_ASPECT_43 ? "as expected" : "UNEXPECTED",
+            g->scale_va, chihiro_ldf(k), ldl_le_p(k),
+            ldl_le_p(k) == CHIHIRO_WM_SCALE_90 ? "as expected" : "UNEXPECTED",
+            CHIHIRO_WM_ASPECT_169, CHIHIRO_WM_SCALE_675);
+    chihiro_wm_game = g;
+}
+
+static void chihiro_wm_ws_tick(void)
+{
+    const ChihiroWmCameras *g = chihiro_wm_game;
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
+    ChihiroWmCamView v[2];
+    uint8_t p[8];
+    uint32_t screen_rw = 0, mirror_cam = 0, mirror_rw = 0;
+    char line[640];
+    int len;
+
+    if (!g || chihiro_wm_lines > CHIHIRO_WM_LOG_LINES ||
+        now - chihiro_wm_last_ms < CHIHIRO_WM_LOG_EVERY) {
+        return;
+    }
+    chihiro_wm_last_ms = now;
+    if (chihiro_guest_rw(g->screen_rw_ptr, p, 4, false)) {
+        screen_rw = ldl_le_p(p);
+    }
+    if (chihiro_guest_rw(g->mirror_cam_ptr, p, 4, false)) {
+        mirror_cam = ldl_le_p(p);
+    }
+    if (chihiro_guest_rw(g->mirror_rw_ptr, p, 4, false)) {
+        mirror_rw = ldl_le_p(p);
+    }
+    chihiro_wm_view(g->main_cam, screen_rw, &v[0]);
+    chihiro_wm_view(mirror_cam, mirror_rw, &v[1]);
+    if (chihiro_wm_lines > 0 && chihiro_wm_view_same(&v[0], &chihiro_wm_last[0]) &&
+        chihiro_wm_view_same(&v[1], &chihiro_wm_last[1])) {
+        return;
+    }
+    memcpy(chihiro_wm_last, v, sizeof(v));
+    if (++chihiro_wm_lines > CHIHIRO_WM_LOG_LINES) {
+        fprintf(stderr, "Chihiro: %s cameras (log only): %d lines, no more\n",
+                g->tag, CHIHIRO_WM_LOG_LINES);
+        return;
+    }
+    len = chihiro_wm_view_str(line, sizeof(line), "main", &v[0]);
+    len += snprintf(line + len, sizeof(line) - len, " | ");
+    chihiro_wm_view_str(line + len, sizeof(line) - len, "mirror", &v[1]);
+    fprintf(stderr, "[%07lld] Chihiro: %s cameras (log only): %s\n", TS_MS,
+            g->tag, line);
 }
 
 /* The mov that carries the slot table, then the fourteen bytes behind it and
