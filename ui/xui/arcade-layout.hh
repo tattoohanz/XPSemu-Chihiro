@@ -1,9 +1,10 @@
 //
 // XPSemu Chihiro: the arcade front's look (after SEGA ALL.Net P-ras MULTI
-// Ver.3's game select): a sky blue bar with the clock, a pale banner naming
-// the emulator, the games as flyer-shaped tiles in a row on white, the selected
-// one in the middle with its name under it, and a sky blue bar at the foot
-// telling how to work the test menu, with a pink play button.
+// Ver.3's game select): a sky blue bar with the Chihiro logo (if there is
+// one) and the clock, a pale banner naming the emulator, the games as
+// flyer-shaped tiles in a row on white, the selected one in the middle with
+// its name under it, and a sky blue bar at the foot with the test menu's
+// buttons.
 //
 // Drawing only, from plain data (dashboard.cc fills it each frame), so the
 // host tool ps5/tools/arcade-preview.cc can draw it too.
@@ -43,6 +44,7 @@ struct ArcadeFrame {
     std::string top = "FREE PLAY";
     std::string banner = "PS5 Chihiro Emulator \xE7\xA8\xBC\xE5\x83\x8D\xE4\xB8\xAD"; // 稼働中
     std::string empty;      // Said in the middle when there are no games
+    ArcadeTileArt logo;     // Top left, fitted into the bar; none: nothing
 };
 
 // The whole screen, size in pixels (laid out in 1080p units).

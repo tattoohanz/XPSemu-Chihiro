@@ -322,6 +322,10 @@ struct DecodeJob {
     int max_h, part; // part: CoverPart, or kArcadeTilePart
 };
 static const int kArcadeTilePart = 100; // XPSemu Chihiro: an arcade tile
+static const int kArcadeLogoPart = 101; // XPSemu Chihiro: the arcade logo
+// The arcade front's logo (arcade/logo.png), top left, and when it came
+static XemuTexture g_arcade_logo;
+static double g_arcade_logo_time;
 struct Decoded {
     DecodeJob job;
     std::vector<uint8_t> rgba;
@@ -417,9 +421,17 @@ static void UploadDecoded()
             d = std::move(g_decoded.front());
             g_decoded.pop_front();
         }
-        GameArt &art = g_art[d.job.game_path];
         XemuTexture tex = d.rgba.empty() ? 0 :
                           xemu_vk_texture_create(d.rgba.data(), d.w, d.h, 4);
+        if (d.job.part == kArcadeLogoPart) {
+            g_arcade_logo = tex;
+            g_arcade_logo_time = ImGui::GetTime();
+            fprintf(stderr, "XPSemu Chihiro: arcade logo %s%s\n",
+                    d.job.file.c_str(),
+                    tex ? "" : " FAILED (not a picture stb_image reads)");
+            continue;
+        }
+        GameArt &art = g_art[d.job.game_path];
         if (d.job.part == kArcadeTilePart) {
             art.tile = tex;
             art.tile_time = ImGui::GetTime();
@@ -1016,6 +1028,7 @@ static std::map<std::string, std::string> g_arcade_tiles;
 
 static void ListArcadeTiles()
 {
+    static std::string logo_asked; // The logo file asked for (once each)
     g_arcade_tiles.clear();
     std::error_code ec;
     const std::string dir = XEMU_PS5_CHIHIRO_ARCADE_DIR;
@@ -1025,8 +1038,15 @@ static void ListArcadeTiles()
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         if (entry.is_regular_file(ec) &&
             (ext == ".png" || ext == ".jpg" || ext == ".jpeg")) {
-            g_arcade_tiles.emplace(CoverKey(entry.path().stem().string()),
-                                   entry.path().string());
+            std::string key = CoverKey(entry.path().stem().string());
+            if (key == "logo") { // The front's logo, top left: not a game's
+                if (logo_asked != entry.path().string()) {
+                    logo_asked = entry.path().string();
+                    DecodeRequest({ "", logo_asked, 240, kArcadeLogoPart });
+                }
+                continue;
+            }
+            g_arcade_tiles.emplace(key, entry.path().string());
         }
     }
     fprintf(stderr, "XPSemu Chihiro: %d arcade tile(s) in %s\n",
@@ -4528,6 +4548,14 @@ void DashboardScene::DrawArcade(float a)
     if (m_games.empty()) {
         f.empty = "Put your Chihiro netboot images (.bin) in "
                   "/data/xemu-chihiro/games";
+    }
+    if (g_arcade_logo) {
+        int w = 1, h = 1;
+        xemu_vk_texture_get_size(g_arcade_logo, &w, &h);
+        f.logo.tex = (ImTextureID)g_arcade_logo;
+        f.logo.w = (float)w;
+        f.logo.h = (float)h;
+        f.logo.fade = std::clamp((float)(t - g_arcade_logo_time) / 0.35f, 0.0f, 1.0f);
     }
     ArcadeDraw(dl, f, size);
     // The middle tile's box, where a game's start animation begins

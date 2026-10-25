@@ -7,7 +7,8 @@
 //   arcade-preview <out.ppm> <width> <height> <selected> [scroll]
 //                  [title|picture.png]...
 //
-// Each game is a name, or "name=picture" for a tile with a picture.
+// Each game is a name, or "name=picture" for a tile with a picture;
+// "logo=picture" is the logo at the top left.
 //
 // Build (from the repository):
 //   g++ -std=c++17 -O2 -Isubprojects/imgui -Iui/xui -Iui/thirdparty/stb_image
@@ -161,13 +162,17 @@ int main(int argc, char **argv)
         if (eq != std::string::npos) {
             int w, h, n;
             unsigned char *px = stbi_load(arg.substr(eq + 1).c_str(), &w, &h, &n, 4);
+            ArcadeTileArt &art = g.title == "logo" ? f.logo : g.art;
             if (px) {
-                g.art.tex = Upload(px, w, h);
-                g.art.w = (float)w;
-                g.art.h = (float)h;
+                art.tex = Upload(px, w, h);
+                art.w = (float)w;
+                art.h = (float)h;
                 stbi_image_free(px);
             } else {
                 fprintf(stderr, "can't read %s\n", arg.substr(eq + 1).c_str());
+            }
+            if (g.title == "logo") { // logo=<picture>: the top left logo
+                continue;
             }
         }
         if (g.title == "Wangan Midnight Maximum Tune 2") {

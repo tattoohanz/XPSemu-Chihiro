@@ -2,11 +2,10 @@
 // XPSemu Chihiro: the arcade front's look (see arcade-layout.hh).
 //
 // Measured off a P-ras MULTI Ver.3 screen and put in 1080p units: the top
-// bar 0-105, the banner 105-193, the bottom bar from 925, the play button's
-// centre at 1691, 931. Its tiles are square; here they are a flyer's shape
-// (A4, 1 by 1.41), 500 high from 232, their centres 455 apart, the name at
-// 785. Colours as on that screen: the bars
-// #02B9FF, the banner #C6FCFC, the names #3C313F, the play button #FF6189,
+// bar 0-105, the banner 105-193, the bottom bar from 925. Its tiles are
+// square; here they are a flyer's shape (A4, 1 by 1.41), 500 high from 232,
+// their centres 455 apart, the name at 785. Colours as on that screen: the
+// bars #02B9FF, the banner #C6FCFC, the names #3C313F, the badge #FF6189,
 // the bars' text white outlined in dark teal.
 //
 // This program is free software; you can redistribute it and/or modify
@@ -132,13 +131,15 @@ void Bars(const Ctx &c, const ArcadeFrame &f)
         TextOutlined(c, 44, w - 62 - m.x, 52 - m.y / 2, f.clock.c_str());
     }
 
-    // Its corner badge: a green tile with "チ" (Chihiro) on white
-    {
-        ImVec2 p0 = P(c, 44, 20), p1 = P(c, 110, 86);
-        dl->AddRectFilled(p0, p1, Col(c, 5, 165, 13), 12 * c.s);
-        dl->AddRectFilled(P(c, 51, 27), P(c, 103, 79), Col(c, 255, 255, 255),
-                          8 * c.s);
-        TextCentred(c, 40, 77, 54, Col(c, 5, 165, 13), "\xE3\x83\x81");
+    // Top left: the Chihiro logo (where P-ras has its ALL.Net badge),
+    // fitted into the bar, up to 440 wide
+    if (f.logo.tex && f.logo.w > 0 && f.logo.h > 0) {
+        const float bh = 76, bw = 440;
+        float k = std::min(bw / f.logo.w, bh / f.logo.h);
+        float lw = f.logo.w * k, lh = f.logo.h * k;
+        dl->AddImage(f.logo.tex, P(c, 40, 52 - lh / 2), P(c, 40 + lw, 52 + lh / 2),
+                     ImVec2(0, 0), ImVec2(1, 1),
+                     Col(c, 255, 255, 255, f.logo.fade));
     }
 
     // The bottom bar, a pale glow above it
@@ -187,7 +188,7 @@ void Help(const Ctx &c)
         total += icon + Measure(c, size, it.label).x;
     }
     total += gap * 2;
-    float x = 840 - total / 2; // Left of the play button
+    float x = c.w / 2 - total / 2;
     for (const auto &it : items) {
         DPad(c, x + 24, 1002, it.lit);
         TextOutlined(c, size, x + icon, 1002 - Measure(c, size, it.label).y / 2,
@@ -225,24 +226,6 @@ void Corner(const Ctx &c)
              Col(c, 255, 255, 255), b.label);
         x += bw + 12;
     }
-}
-
-void PlayButton(const Ctx &c)
-{
-    const float cx = 1691, cy = 931, r = 66;
-    c.dl->AddCircleFilled(P(c, cx + 3, cy + 5), r * c.s, Col(c, 0, 60, 90, 0.25f),
-                          64);
-    c.dl->AddCircleFilled(P(c, cx, cy), r * c.s, Col(c, 255, 97, 137), 64);
-    c.dl->AddTriangleFilled(P(c, cx - 18, cy - 27), P(c, cx + 30, cy),
-                            P(c, cx - 18, cy + 27), Col(c, 255, 255, 255));
-    // The DualSense's cross that works it, on a white badge
-    float bx = cx - 52, by = cy - 50;
-    c.dl->AddCircleFilled(P(c, bx, by), 21 * c.s, Col(c, 255, 255, 255), 32);
-    c.dl->AddCircle(P(c, bx, by), 21 * c.s, Col(c, 2, 185, 255), 32, 2.5f * c.s);
-    c.dl->AddLine(P(c, bx - 9, by - 9), P(c, bx + 9, by + 9), Col(c, 2, 120, 200),
-                  3.5f * c.s);
-    c.dl->AddLine(P(c, bx + 9, by - 9), P(c, bx - 9, by + 9), Col(c, 2, 120, 200),
-                  3.5f * c.s);
 }
 
 const float kTileH = 500, kTileW = kTileH / 1.41f, kTileTop = 232, kStep = 455;
@@ -325,7 +308,6 @@ void ArcadeDraw(ImDrawList *dl, const ArcadeFrame &f, ImVec2 size)
 
     Help(c);
     Corner(c);
-    PlayButton(c);
 }
 
 void ArcadeMiddleTile(ImVec2 size, ImVec2 *p0, ImVec2 *p1)
