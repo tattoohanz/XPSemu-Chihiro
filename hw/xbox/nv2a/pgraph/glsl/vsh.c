@@ -590,9 +590,11 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
      * (barycentrics against gl_FragCoord) must be narrowed the same
      * way, or the depth of every fragment off the centre is wrong.
      * XEMU_WS_HACK=2 narrows the programmable draws only (the 2D of the
-     * Chihiro titles it is for); fixed-function ones keep their x. */
+     * Chihiro titles it is for); fixed-function ones keep their x.
+     * XEMU_WS_HACK=3 narrows none here (the HUD is moved on the CPU). */
     float ws = xemu_get_ws_scale();
-    if (state->is_fixed_function && xemu_get_ws_2d_only()) {
+    if (xemu_get_ws_cpu_only() ||
+        (state->is_fixed_function && xemu_get_ws_2d_only())) {
         ws = 1.0f;
     }
     if (ws != 1.0f) {

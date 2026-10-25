@@ -60,6 +60,19 @@
  * window clip regions of the
  * pixel shader (glsl/psh.c calls pgraph_hud_ws_clip_regions), so geometry
  * the clip x scale reveals beyond the original frame stays hidden.
+ *
+ * HUD layer (XEMU_WS_HACK=3, for a game whose patch draws the 3D 16:9 and
+ * whose 3D also uses programmable shaders, Ollie King): no shader is scaled
+ * and the copy-pass fix, 4:3 clip and menu background are off. A full-screen
+ * copy of a surface that took FF draws this frame onto one that took none
+ * marks that one as the frame's HUD layer; the 2D drawn on it afterwards is
+ * narrowed by ws around the centre on the CPU and, by the same side rules,
+ * moved to its 16:9 edge. A glyph on the line of an element with the same
+ * texture and program, within a tenth of the width, takes that element's
+ * side (strings drawn out of order). A frame whose 2D there covered 90% of
+ * the screen or more (a results screen over the scene) makes the next one
+ * keep it all whole, 4:3 in the centre. Menus, which compose elsewhere and
+ * copy that, stay as the game draws them.
  */
 
 #include "qemu/osdep.h"
@@ -168,13 +181,14 @@ static struct {
 } hd;
 
 enum { HD_WS_NONE, HD_WS_COPY, HD_WS_FAIL, HD_WS_BD, HD_WS_L, HD_WS_C,
-       HD_WS_R, HD_WS_WIDE };
+       HD_WS_R, HD_WS_WIDE, HD_WS_HUD };
 
 bool pgraph_hud_ws_active;
 
 static struct {
     bool init;
     bool copy_on, hud_on, clip_on, menubg_on;
+    bool cpu;                  /* XEMU_WS_HACK=3: the HUD moved on the CPU only */
     float ws;
     uint32_t rt[16];           /* surfaces rendered to so far */
     unsigned int n_rt, rt_next;
@@ -193,6 +207,12 @@ static struct {
     unsigned int n_lr;
     uint32_t s43[8];           /* surfaces that were a 2D screen last frame */
     unsigned int n_s43;
+    uint32_t hud[8];           /* surfaces the 3D scene was copied onto this */
+    unsigned int n_hud;        /*    frame (XEMU_WS_HACK=3) */
+    float hud_cover;           /* ...the share of the screen their 2D covers */
+    bool layout;               /* last frame's covered most of it: a screen */
+    float last_cover;          /* for the log: the frame that just ended */
+    bool last_layout;
     /* calls from glsl/psh.c this frame and how many narrowed the regions;
      * last_* hold the frame that just ended, for the log */
     unsigned int clip_calls, clip_applied, last_calls, last_applied;
@@ -206,7 +226,8 @@ static struct {
     } run;
     float edge;                /* side threshold, fraction of the width */
     struct {                   /* anchored boxes this frame (before the move) */
-        uint32_t surf;
+        uint32_t surf, t0;
+        uint64_t prog;
         float x0, x1, y0, y1;
         int side;
     } anch[256];
@@ -839,15 +860,21 @@ static void hd_frame_begin(void)
 
 static void hd_frame_end(void)
 {
+    char layer[64] = "";
     hd_run_close();
+    if (hw.cpu) {
+        snprintf(layer, sizeof(layer), " | hud cover %.0f%%%s",
+                 hw.last_cover * 100.0f,
+                 hw.last_layout ? " layout (all ws=C)" : "");
+    }
     fprintf(hd.f,
             "== F%06" PRIu64 " draws=%u ff=%u prg=%u | 2d=%u 3d=%u unk=%u "
             "empty=%u nop=%u | surf %ux%u aa %ux%u scale %u | psh clip "
-            "calls=%u applied=%u | clear43=%u%s\n",
+            "calls=%u applied=%u | clear43=%u%s%s\n",
             hd.flips, hd.draws, hd.n_ff, hd.n_prg, hd.n_2d, hd.n_3d,
             hd.n_unk, hd.n_empty, hd.n_nop, hd.surf_w, hd.surf_h, hd.aa_w,
             hd.aa_h, hd.scale, hw.last_calls, hw.last_applied,
-            hw.last_clears_split,
+            hw.last_clears_split, layer,
             hd.truncated ? " TRUNCATED" : "");
     if (hd.defs.len) {
         fwrite(hd.defs.p, 1, hd.defs.len, hd.f);
@@ -946,15 +973,24 @@ static void hd_init(void)
         "area on this surface, after a backdrop, and all of the next frame "
         "after a frame with a backdrop and no anchored HUD)\n"
         "# 16:9 menu background: %s (ws=wide: full-width layer stretched, "
-        "after an untextured backdrop)\n",
-        ws, xemu_get_ws_2d_only() ? " (2D only: FF draws unscaled)" : "",
+        "after an untextured backdrop)\n"
+        "# HUD layer: %s (XEMU_WS_HACK=3, no shader scaled: ws=hud: a "
+        "full-screen copy of a surface with FF draws this frame onto one "
+        "without; the 2D after it there is narrowed by ws around the centre, "
+        "ws=C, or narrowed and moved to its edge, ws=L/R; a glyph on the "
+        "line of an element of the same texture within W/10 takes its "
+        "side; after a frame whose 2D there covered 90%% or more, all "
+        "ws=C)\n",
+        ws, xemu_get_ws_2d_only() ? " (2D only: FF draws unscaled)" :
+            xemu_get_ws_cpu_only() ? " (HUD only, by the CPU)" : "",
         hd.every, hd.max_frames, ws,
         pgraph_hud_ws_active && hw.copy_on ? "on" : "off",
         pgraph_hud_ws_active && hw.hud_on ? "on" : "off",
         320.0f * (1.0f - ws) / ws,
         hw.edge * 100.0f,
         pgraph_hud_ws_active && hw.clip_on ? "on" : "off",
-        pgraph_hud_ws_active && hw.menubg_on ? "on" : "off");
+        pgraph_hud_ws_active && hw.menubg_on ? "on" : "off",
+        pgraph_hud_ws_active && hw.cpu ? "on" : "off");
     fflush(hd.f);
 }
 
@@ -1053,7 +1089,7 @@ static void hd_emit_2d(unsigned int idx, bool ff, const char *id,
     }
     static const char *const wsn[] = { "", " ws=copy", " ws=FAIL",
                                        " ws=bd", " ws=L", " ws=C", " ws=R",
-                                       " ws=wide" };
+                                       " ws=wide", " ws=hud" };
     hb_printf(b, "%s%s%s%s%s", zconst ? " zc" : "", oob ? " OOB" : "",
               nop ? " nop" : "", hd.cur_c43 ? " c43" : "",
               (unsigned int)hd.ws_action < ARRAY_SIZE(wsn) ?
@@ -1333,6 +1369,14 @@ static void hw_init(void)
     hw.clip_on = !(e && e[0] == '0');
     e = getenv("XEMU_WS_MENUBG");
     hw.menubg_on = e && e[0] == '1';   /* opt-in: menus stay 4:3 */
+    /* XEMU_WS_HACK=3 scales no shader: the copy-pass fix, the 4:3 clip and
+     * the menu background would only undo or cut a picture drawn 1:1 */
+    hw.cpu = xemu_get_ws_cpu_only();
+    if (hw.cpu) {
+        hw.copy_on = false;
+        hw.clip_on = false;
+        hw.menubg_on = false;
+    }
     /* XEMU_WS_HUD_EDGE: percent of the width from each edge within which
      * an element's centre anchors it to that edge (default 26) */
     hw.edge = 0.26f;
@@ -1436,6 +1480,14 @@ static void hw_frame_reset(void)
     hw.n_wide = 0;
     hw.n_phase = 0;
     hw.n_anch = 0;
+    hw.n_hud = 0;
+    /* XEMU_WS_HACK=3: 2D over most of the scene is a layout, not a HUD
+     * (Ollie King's results cover over 100%, its race HUD with a popup
+     * under 75%): the next frame keeps it whole, 4:3 in the centre */
+    hw.last_cover = hw.hud_cover;
+    hw.last_layout = hw.layout;
+    hw.layout = hw.hud_cover >= 0.9f;
+    hw.hud_cover = 0.0f;
     hw.run.valid = false;
 }
 
@@ -1556,14 +1608,16 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
     bool tex_rt = tex_on && hw_is_rt(t0);
     bool bd = hw_has(hw.bd, hw.n_bd, surf);
     bool anchor = hw.hud_on && !bd && !hw_has(hw.fade, hw.n_fade, surf) &&
-                  hw_has(hw.scene, hw.n_scene, surf);
+                  (hw.cpu ? hw_has(hw.hud, hw.n_hud, surf)
+                          : hw_has(hw.scene, hw.n_scene, surf));
     /* a backdrop must be caught even before the scene starts: menus draw
      * theirs first and a 3D model (the car on the card screen) after it */
     bool wide = bd && hw_has(hw.wide, hw.n_wide, surf);
     bool want_bd = (hw.hud_on || hw.clip_on || hw.menubg_on) && !bd;
 
     if (mode != 2 ||
-        !((tex_rt && hw.copy_on) || anchor || want_bd || wide)) {
+        !(hw.cpu ? (tex_rt || anchor)
+                 : ((tex_rt && hw.copy_on) || anchor || want_bd || wide))) {
         hw.run.valid = false;
         return;
     }
@@ -1650,6 +1704,36 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
     }
     bool full_w = x0 <= 1.0f && x1 >= W - 1.0f;
     bool full_h = y0 <= 1.0f && y1 >= H - 1.0f;
+
+    /* XEMU_WS_HACK=3: a full-screen copy of a surface that took FF (3D)
+     * draws this frame, onto one that took none, puts the scene on the
+     * screen: the 2D drawn there after it is the HUD. Any other full-screen
+     * draw there (a menu's copy, a fade) ends it for the frame. Nothing else
+     * is changed: no shader is scaled, the 3D is 16:9 by the game's patch. */
+    if (hw.cpu) {
+        if (full_w && full_h) {
+            hw.run.valid = false;
+            if (tex_rt && hw_has(hw.scene, hw.n_scene, t0) &&
+                !hw_has(hw.scene, hw.n_scene, surf)) {
+                hw_add(hw.hud, &hw.n_hud, ARRAY_SIZE(hw.hud), surf);
+                hd.ws_action = HD_WS_HUD;
+            } else {
+                hw_take(hw.hud, &hw.n_hud, surf);
+            }
+            return;
+        }
+        /* a band or overlay as wide as the screen stays as wide */
+        if (!anchor || full_w) {
+            hw.run.valid = false;
+            return;
+        }
+        float bw = fminf(x1, W) - fmaxf(x0, 0.0f);
+        float bh = fminf(y1, H) - fmaxf(y0, 0.0f);
+        if (bw > 0.0f && bh > 0.0f) {
+            hw.hud_cover += bw * bh / (W * H);
+        }
+        goto side;
+    }
 
     /* copy pass: keep it 1:1 */
     if (tex_rt && hw.copy_on && (full_w || full_h)) {
@@ -1749,6 +1833,7 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
         return;
     }
 
+side:;
     /* side, in this order:
      * - inside an element already anchored this frame (a needle in its
      *   dial, digits in their panel): that element's side;
@@ -1761,7 +1846,7 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
     int side = 0;
     bool inside = false;
     for (unsigned int i = hw.n_anch; i-- > 0;) {
-        if (hw.anch[i].surf == surf &&
+        if (hw.anch[i].surf == surf && hw.anch[i].side != 0 &&
             hw.anch[i].x1 - hw.anch[i].x0 >= 8.0f &&
             hw.anch[i].y1 - hw.anch[i].y0 >= 8.0f &&
             x0 >= hw.anch[i].x0 - 2.0f && x1 <= hw.anch[i].x1 + 2.0f &&
@@ -1769,6 +1854,20 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
             side = hw.anch[i].side;
             inside = true;
             break;
+        }
+        /* XEMU_WS_HACK=3: the next glyph on the same line, same texture
+         * and program, beside it within a tenth of the width (Ollie King's
+         * "Total" time draws its colons first, then the digits between) */
+        if (hw.cpu && hw.anch[i].surf == surf && hw.anch[i].t0 == t0 &&
+            hw.anch[i].prog == prog->hash) {
+            float oy = fminf(y1, hw.anch[i].y1) - fmaxf(y0, hw.anch[i].y0);
+            float gap = fmaxf(hw.anch[i].x0 - x1, x0 - hw.anch[i].x1);
+            if (oy >= 0.5f * fminf(y1 - y0, hw.anch[i].y1 - hw.anch[i].y0) &&
+                gap >= -2.0f && gap <= 0.1f * W) {
+                side = hw.anch[i].side;
+                inside = true;
+                break;
+            }
         }
     }
     bool cont = hw.run.valid && hw.run.surf == surf && hw.run.t0 == t0 &&
@@ -1799,16 +1898,23 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
         hw.run.side = side;
     }
 
-    if (side == 0) {
+    if (hw.cpu && hw.layout) {
+        side = 0;
+    }
+    if (side == 0 && !hw.cpu) {
         hd.ws_action = HD_WS_C;
         return;
     }
     /* a HUD on this surface: not a 2D screen, stop carrying last frame's
      * 4:3 clip into it */
-    hw_add(hw.lr, &hw.n_lr, ARRAY_SIZE(hw.lr), surf);
-    hw_take(hw.s43, &hw.n_s43, surf);
+    if (side != 0) {
+        hw_add(hw.lr, &hw.n_lr, ARRAY_SIZE(hw.lr), surf);
+        hw_take(hw.s43, &hw.n_s43, surf);
+    }
     if (hw.n_anch < ARRAY_SIZE(hw.anch)) {
         hw.anch[hw.n_anch].surf = surf;
+        hw.anch[hw.n_anch].t0 = t0;
+        hw.anch[hw.n_anch].prog = prog->hash;
         hw.anch[hw.n_anch].x0 = x0;
         hw.anch[hw.n_anch].x1 = x1;
         hw.anch[hw.n_anch].y0 = y0;
@@ -1823,10 +1929,14 @@ void pgraph_hud_ws_draw_impl(NV2AState *d)
     float dx = (float)side * 0.5f * W * (1.0f - hw.ws) / hw.ws;
     for (size_t i = 0; i < n; i++) {
         target[i] = sx[i] + dx;
+        /* XEMU_WS_HACK=3: no shader narrows it, so narrow it here too */
+        if (hw.cpu) {
+            target[i] = 0.5f * W + (target[i] - 0.5f * W) * hw.ws;
+        }
     }
     if (hw_write_x(pg, prog, at, need, kind, n, ia_off, ia_vsize, sx,
                    target)) {
-        hd.ws_action = side < 0 ? HD_WS_L : HD_WS_R;
+        hd.ws_action = side < 0 ? HD_WS_L : side > 0 ? HD_WS_R : HD_WS_C;
     } else {
         hd.ws_action = HD_WS_FAIL;
     }

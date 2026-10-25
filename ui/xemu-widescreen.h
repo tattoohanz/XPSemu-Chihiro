@@ -50,6 +50,14 @@ float xemu_get_ws_scale(void);
  * 16:9 itself (Maximum Tune 1/2: XEMU_WM1_/XEMU_WM2_WIDESCREEN=1). */
 bool xemu_get_ws_2d_only(void);
 
+/* XEMU_WS_HACK=3: no shader is scaled; only the HUD is narrowed, on the CPU,
+ * by hw/xbox/nv2a/pgraph/hud_diag.c: the 2D drawn on a surface after the 3D
+ * scene was copied onto it (Ollie King: its scene, 3D characters drawn with
+ * programmable shaders among it, is copied to the screen and the HUD drawn
+ * over it), while a game patch makes the 3D 16:9 itself
+ * (XEMU_OLLIE_WIDESCREEN=1). */
+bool xemu_get_ws_cpu_only(void);
+
 #ifdef __cplusplus
 }
 #endif

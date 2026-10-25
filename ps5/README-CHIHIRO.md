@@ -56,9 +56,9 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   the sides are drawn by the game. Give the game the 16:9 screen shape and
   `XEMU_WS_HACK=2` for its HUD and menus. Off by default.
 - `XEMU_OLLIE_WIDESCREEN=1`: Ollie King draws 16:9 itself (its camera's fov
-  and aspect, and its culling, in memory). Its HUD stays stretched; leave
-  `XEMU_WS_HACK` at 0 for it (it draws 3D with programmable shaders too, so
-  `2` would narrow its 3D). Off by default.
+  and aspect, and its culling, in memory). Give it the 16:9 screen shape and
+  `XEMU_WS_HACK=3` for its HUD (it draws 3D with programmable shaders too,
+  so `2` would narrow its 3D). Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
@@ -66,6 +66,10 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
   these games draw their 3D with the fixed-function pipeline), for a game
   whose 3D is made 16:9 by its own patch: in env.txt's section for that
   game, e.g. `[wangmid2]` with `XEMU_WM2_WIDESCREEN=1` and `XEMU_WS_HACK=2`.
+  `XEMU_WS_HACK=3` scales no shader and moves only the HUD, on the CPU: the
+  2D drawn over the 3D scene once the game copies the scene to the screen,
+  narrowed to 4:3 and out to the 16:9 edges (Ollie King, `[ollie]` with
+  `XEMU_OLLIE_WIDESCREEN=1`); its menus stay as the game draws them.
 - `XEMU_DEPTH_READ_LAG`, `XEMU_ZETA_REUSE_LARGER`, `XEMU_CUBE_FROM_SURFACES`,
   `XEMU_GPU_BLIT`: PS5 speed-ups, on by default; 0 does it as XPSemu does.
 - `XEMU_CHIHIRO_FFB=100`: the drive board's force feedback as DualSense

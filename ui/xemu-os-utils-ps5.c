@@ -848,8 +848,8 @@ static const char kEnvTemplate[] =
     "XEMU_WM1_WIDESCREEN=0\n"
     "XEMU_WM2_WIDESCREEN=0\n"
     "#\n"
-    "# Ollie King: the same, its camera 16:9 (in memory; 0 = 4:3). Its HUD\n"
-    "# stays stretched: leave XEMU_WS_HACK at 0 for it.\n"
+    "# Ollie King: the same, its camera 16:9 (in memory; 0 = 4:3), with\n"
+    "# XEMU_WS_HACK=3 for its HUD.\n"
     "XEMU_OLLIE_WIDESCREEN=0\n"
     "#\n"
     "# 16:9 widescreen for the Chihiro games (1 = on); set the screen shape\n"
@@ -858,6 +858,8 @@ static const char kEnvTemplate[] =
     "# menus kept 4:3, the menu background not stretched. 2 = the same for\n"
     "# the 2D only, for a game that draws its 3D 16:9 itself (Maximum Tune\n"
     "# with XEMU_WM*_WIDESCREEN=1): set it for that game alone (below).\n"
+    "# 3 = the HUD only, moved on the CPU, for Ollie King with\n"
+    "# XEMU_OLLIE_WIDESCREEN=1 (its 3D uses programmable shaders too).\n"
     "XEMU_WS_HACK=0\n"
     "XEMU_WS_COPY=1\n"
     "XEMU_WS_HUD=1\n"
@@ -912,7 +914,10 @@ static const char kEnvTemplate[] =
     "# Tune 2 alone:\n"
     "#[wangmid2]\n"
     "#XEMU_WM2_WIDESCREEN=1\n"
-    "#XEMU_WS_HACK=2\n";
+    "#XEMU_WS_HACK=2\n"
+    "#[ollie]\n"
+    "#XEMU_OLLIE_WIDESCREEN=1\n"
+    "#XEMU_WS_HACK=3\n";
 
 /*
  * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set
