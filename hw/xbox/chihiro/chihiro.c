@@ -3620,10 +3620,8 @@ static void chihiro_watch_check(void)
             base = c + 1;
         }
     }
-    chihiro_patch_group("XEMU_OLLIE_WIDESCREEN", "OllieKing.xbe", 0, 0,
-                        ollie_ws, ARRAY_SIZE(ollie_ws), "OLLIE WIDESCREEN",
-                        "draws 16:9: fov tan x 4/3 (0009EC05), k 0.75 "
-                        "(0009E2D0, 0009EE4A), x culling (000A2934)");
+    /* The build first, by its code as it came (a patch changes Ollie
+     * King's), then the patch. */
     for (size_t i = 0; i < ARRAY_SIZE(chihiro_watch_games); i++) {
         const ChihiroWatchGame *g = &chihiro_watch_games[i];
         if (g_ascii_strcasecmp(base, g->xbe) != 0) {
@@ -3635,13 +3633,19 @@ static void chihiro_watch_check(void)
             continue;
         }
         chihiro_watch_game = g;
+        break;
+    }
+    chihiro_patch_group("XEMU_OLLIE_WIDESCREEN", "OllieKing.xbe", 0, 0,
+                        ollie_ws, ARRAY_SIZE(ollie_ws), "OLLIE WIDESCREEN",
+                        "draws 16:9: fov tan x 4/3 (0009EC05), k 0.75 "
+                        "(0009E2D0, 0009EE4A), x culling (000A2934)");
+    if (chihiro_watch_game) {
         fprintf(stderr, "Chihiro: %s camera (log only): %s, its code at "
                 "%08X as expected; values logged every 2 s while they "
-                "change\n", g->tag, g->xbe, g->sig_va);
-        return;
-    }
-    if (g_ascii_strcasecmp(base, "OUTRUN2.XBE") == 0 ||
-        g_ascii_strcasecmp(base, "OllieKing.xbe") == 0) {
+                "change\n", chihiro_watch_game->tag, chihiro_watch_game->xbe,
+                chihiro_watch_game->sig_va);
+    } else if (g_ascii_strcasecmp(base, "OUTRUN2.XBE") == 0 ||
+               g_ascii_strcasecmp(base, "OllieKing.xbe") == 0) {
         fprintf(stderr, "Chihiro: %s is not a build the camera log knows\n",
                 base);
     }
