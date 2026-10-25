@@ -216,6 +216,8 @@ static void chihiro_patch_wm2_special(void);
 static void chihiro_patch_wm2_kijima(void);
 static void chihiro_wm_ws_check(void);
 static void chihiro_wm_ws_tick(void);
+static void chihiro_watch_check(void);
+static void chihiro_watch_tick(void);
 static bool chihiro_mbcom_bootstrap_done; /* Reset on QuickReboot so game gets fresh DIMM_SIZE */
 static bool chihiro_e1_armed; /* Reset on QuickReboot to prevent premature response delivery */
 char chihiro_game_filename[64]; /* set by chihiro_set_game_executable */
@@ -679,6 +681,7 @@ void chihiro_on_ohci_bus_start(void)
             chihiro_patch_wm2_special();
             chihiro_patch_wm2_kijima();
             chihiro_wm_ws_check();
+            chihiro_watch_check();
         }
         if (game_mode_bus_starts >= 2) {
             fprintf(stderr, "[%07lld] QUICKREBOOT (BUS START #%d in game mode)\n",
@@ -1496,6 +1499,7 @@ static void chihiro_diag_timer_cb(void *opaque)
             chihiro_card_reader_tick();
         chihiro_backup_tick();
         chihiro_wm_ws_tick();
+        chihiro_watch_tick();
         timer_mod(s->diag_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 16);
         return;
     }
@@ -3459,6 +3463,207 @@ static void chihiro_wm_ws_tick(void)
     len += snprintf(line + len, sizeof(line) - len, " | ");
     chihiro_wm_view_str(line + len, sizeof(line) - len, "mirror", &v[1]);
     fprintf(stderr, "[%07lld] Chihiro: %s cameras (log only): %s\n", TS_MS,
+            g->tag, line);
+}
+
+/* Widescreen for OutRun 2, OutRun 2 SP and Ollie King, step 1: log only,
+ * nothing is written. Their projections, from the XBEs:
+ *  OutRun 2 SP (OUTRUN2.XBE, SBJE): the camera's aspect is the 4/3 at
+ *    0x200258, read once, by its init (0x21E40); with the vertical fov (made
+ *    from a 50-degree horizontal one and 3/4) it goes to the projection
+ *    builder (0x44B90), which keeps the frustum's extents at 0x423B10..24
+ *    (read again by 0x45025..0x45118, the culling, it seems) and puts an
+ *    off-centre matrix on the stack at [0x425C54]. Another scene passes 4/3
+ *    as an immediate (0x42954).
+ *  OutRun 2 (OUTRUN2.XBE, SGBZ): the same code: 0x1CC370 read at 0x1F300,
+ *    extents 0x3366E0..F4, matrix at [0x338704], immediate at 0x3ABE4.
+ *  Ollie King (OllieKing.xbe): a horizontal fov in angle units (0x9EBE0);
+ *    the projection matrix at 0x1D6E20 (SetTransform 1 at 0x9EBD3), its
+ *    _22 = W / (H * k) from the viewport (0x53D640, 0x53D644); the focal
+ *    length in pixels at 0x53D628 and the culling factors at 0x53D80C..18
+ *    (0xA2930).
+ * The two builds named OUTRUN2.XBE are told apart by their code. Logged at
+ * most every 2 s while something changes, 120 lines at most. */
+typedef struct {
+    const char *label;
+    uint32_t    va;
+    int32_t     off;    /* -1: the value at va; else at *(u32 *)va + off */
+    bool        is_int;
+} ChihiroWatch;
+
+typedef struct {
+    const char         *xbe;
+    uint32_t            sig_va;
+    const uint8_t      *sig;
+    uint32_t            sig_len;
+    const char         *tag;
+    const ChihiroWatch *w;
+    size_t              n;
+} ChihiroWatchGame;
+
+static const uint8_t chihiro_or2sp_sig[] = {
+    0xF3, 0x0F, 0x10, 0x05, 0x58, 0x02, 0x20, 0x00 /* movss xmm0,[0x200258] */
+};
+static const uint8_t chihiro_or2_sig[] = {
+    0xF3, 0x0F, 0x10, 0x05, 0x70, 0xC3, 0x1C, 0x00 /* movss xmm0,[0x1CC370] */
+};
+static const uint8_t chihiro_ollie_sig[] = {
+    0xD8, 0x0D, 0x68, 0x5E, 0x19, 0x00, 0xD8, 0x0D, 0x64, 0x5E, 0x19, 0x00
+};
+
+/* _11 and _22 come first: the aspect logged is _22 / _11 */
+static const ChihiroWatch chihiro_or2sp_watch[] = {
+    { "_11", 0x00425C54u, 0x00, false }, { "_22", 0x00425C54u, 0x14, false },
+    { "_31", 0x00425C54u, 0x20, false }, { "_33", 0x00425C54u, 0x28, false },
+    { "_43", 0x00425C54u, 0x38, false },
+    { "e0", 0x00423B10u, -1, false }, { "e1", 0x00423B14u, -1, false },
+    { "e2", 0x00423B18u, -1, false }, { "e3", 0x00423B1Cu, -1, false },
+    { "e4", 0x00423B20u, -1, false }, { "e5", 0x00423B24u, -1, false },
+};
+static const ChihiroWatch chihiro_or2_watch[] = {
+    { "_11", 0x00338704u, 0x00, false }, { "_22", 0x00338704u, 0x14, false },
+    { "_31", 0x00338704u, 0x20, false }, { "_33", 0x00338704u, 0x28, false },
+    { "_43", 0x00338704u, 0x38, false },
+    { "e0", 0x003366E0u, -1, false }, { "e1", 0x003366E4u, -1, false },
+    { "e2", 0x003366E8u, -1, false }, { "e3", 0x003366ECu, -1, false },
+    { "e4", 0x003366F0u, -1, false }, { "e5", 0x003366F4u, -1, false },
+};
+static const ChihiroWatch chihiro_ollie_watch[] = {
+    { "_11", 0x001D6E20u, -1, false }, { "_22", 0x001D6E34u, -1, false },
+    { "_33", 0x001D6E48u, -1, false }, { "_34", 0x001D6E4Cu, -1, false },
+    { "_43", 0x001D6E58u, -1, false },
+    { "focal", 0x0053D628u, -1, false }, { "fy", 0x0053D630u, -1, false },
+    { "cx", 0x0053D62Cu, -1, false }, { "cy", 0x0053D634u, -1, false },
+    { "W", 0x0053D640u, -1, true }, { "H", 0x0053D644u, -1, true },
+    { "c0", 0x0053D80Cu, -1, false }, { "c1", 0x0053D810u, -1, false },
+    { "c2", 0x0053D814u, -1, false }, { "c3", 0x0053D818u, -1, false },
+};
+
+static const ChihiroWatchGame chihiro_watch_games[] = {
+    { "OUTRUN2.XBE", 0x00021E40u, chihiro_or2sp_sig, sizeof(chihiro_or2sp_sig),
+      "OR2SP", chihiro_or2sp_watch, ARRAY_SIZE(chihiro_or2sp_watch) },
+    { "OUTRUN2.XBE", 0x0001F300u, chihiro_or2_sig, sizeof(chihiro_or2_sig),
+      "OR2", chihiro_or2_watch, ARRAY_SIZE(chihiro_or2_watch) },
+    { "OllieKing.xbe", 0x0009EC05u, chihiro_ollie_sig, sizeof(chihiro_ollie_sig),
+      "OLLIE", chihiro_ollie_watch, ARRAY_SIZE(chihiro_ollie_watch) },
+};
+
+#define CHIHIRO_WATCH_MAX 16
+
+static const ChihiroWatchGame *chihiro_watch_game;
+static float chihiro_watch_last[CHIHIRO_WATCH_MAX];
+static bool chihiro_watch_ok_last[CHIHIRO_WATCH_MAX];
+static int64_t chihiro_watch_last_ms;
+static int chihiro_watch_lines;
+
+static void chihiro_watch_check(void)
+{
+    const char *base = chihiro_game_filename;
+    uint8_t have[16];
+
+    chihiro_watch_game = NULL;
+    chihiro_watch_lines = 0;
+    chihiro_watch_last_ms = 0;
+    for (const char *c = chihiro_game_filename; *c; c++) {
+        if (*c == '\\' || *c == '/') {
+            base = c + 1;
+        }
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(chihiro_watch_games); i++) {
+        const ChihiroWatchGame *g = &chihiro_watch_games[i];
+        if (g_ascii_strcasecmp(base, g->xbe) != 0) {
+            continue;
+        }
+        if (g->sig_len > sizeof(have) ||
+            !chihiro_guest_rw(g->sig_va, have, g->sig_len, false) ||
+            memcmp(have, g->sig, g->sig_len) != 0) {
+            continue;
+        }
+        chihiro_watch_game = g;
+        fprintf(stderr, "Chihiro: %s camera (log only): %s, its code at "
+                "%08X as expected; values logged every 2 s while they "
+                "change\n", g->tag, g->xbe, g->sig_va);
+        return;
+    }
+    if (g_ascii_strcasecmp(base, "OUTRUN2.XBE") == 0 ||
+        g_ascii_strcasecmp(base, "OllieKing.xbe") == 0) {
+        fprintf(stderr, "Chihiro: %s is not a build the camera log knows\n",
+                base);
+    }
+}
+
+static void chihiro_watch_tick(void)
+{
+    const ChihiroWatchGame *g = chihiro_watch_game;
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
+    float v[CHIHIRO_WATCH_MAX];
+    bool ok[CHIHIRO_WATCH_MAX], changed = false;
+    char line[768];
+    int len;
+
+    if (!g || g->n > CHIHIRO_WATCH_MAX ||
+        chihiro_watch_lines > CHIHIRO_WM_LOG_LINES ||
+        now - chihiro_watch_last_ms < CHIHIRO_WM_LOG_EVERY) {
+        return;
+    }
+    chihiro_watch_last_ms = now;
+    for (size_t i = 0; i < g->n; i++) {
+        const ChihiroWatch *w = &g->w[i];
+        uint8_t b[4];
+        uint32_t va = w->va;
+
+        ok[i] = false;
+        v[i] = 0;
+        if (w->off >= 0) {
+            if (!chihiro_guest_rw(va, b, 4, false) || !ldl_le_p(b)) {
+                continue;
+            }
+            va = ldl_le_p(b) + (uint32_t)w->off;
+        }
+        if (!chihiro_guest_rw(va, b, 4, false)) {
+            continue;
+        }
+        ok[i] = true;
+        v[i] = w->is_int ? (float)(int32_t)ldl_le_p(b) : chihiro_ldf(b);
+        if (!(fabsf(v[i]) < 1e30f)) {
+            v[i] = 1e30f; /* NaN or huge: printed, never "changing" */
+        }
+    }
+    for (size_t i = 0; i < g->n; i++) {
+        if (ok[i] != chihiro_watch_ok_last[i] ||
+            fabsf(v[i] - chihiro_watch_last[i]) >
+                1e-4f * fmaxf(1.0f, fabsf(v[i]))) {
+            changed = true;
+        }
+    }
+    if (chihiro_watch_lines > 0 && !changed) {
+        return;
+    }
+    memcpy(chihiro_watch_last, v, sizeof(float) * g->n);
+    memcpy(chihiro_watch_ok_last, ok, sizeof(bool) * g->n);
+    if (++chihiro_watch_lines > CHIHIRO_WM_LOG_LINES) {
+        fprintf(stderr, "Chihiro: %s camera (log only): %d lines, no more\n",
+                g->tag, CHIHIRO_WM_LOG_LINES);
+        return;
+    }
+    len = 0;
+    if (ok[0] && ok[1] && fabsf(v[0]) > 1e-6f) {
+        len += snprintf(line + len, sizeof(line) - len, "aspect _22/_11 %.4f |",
+                        v[1] / v[0]);
+    }
+    for (size_t i = 0; i < g->n && len < (int)sizeof(line) - 32; i++) {
+        if (!ok[i]) {
+            len += snprintf(line + len, sizeof(line) - len, " %s -",
+                            g->w[i].label);
+        } else if (g->w[i].is_int) {
+            len += snprintf(line + len, sizeof(line) - len, " %s %d",
+                            g->w[i].label, (int)v[i]);
+        } else {
+            len += snprintf(line + len, sizeof(line) - len, " %s %.4f",
+                            g->w[i].label, v[i]);
+        }
+    }
+    fprintf(stderr, "[%07lld] Chihiro: %s camera (log only): %s\n", TS_MS,
             g->tag, line);
 }
 
