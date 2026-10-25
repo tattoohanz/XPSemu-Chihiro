@@ -41,6 +41,22 @@ OutRun 2 and Ollie King. Some scenes still run below 60 FPS.
 
 Xbox games work as in XPSemu, with the MCPX ROM and BIOS in `/data/xemu-chihiro/`.
 
+### Artwork
+
+The release has no artwork: the arcade front shows each game's name until you add your own
+pictures (`.png` or `.jpg`).
+
+| Path | What it is |
+|---|---|
+| `/data/xemu-chihiro/arcade/` | The arcade front's tiles, one per game, named after the game's MAME set (`wangmid2.jpg`), its MAME name (`Wangan Midnight Maximum Tune 2.png`) or its file's name. A flyer's shape (1 by 1.41) fits best; any size. |
+| `/data/xemu-chihiro/arcade/logos/` | A game's logo, shown under the row while the game is selected, named as the tiles. A transparent PNG suits the white. |
+| `/data/xemu-chihiro/arcade/logo.png` | The logo at the top left of the arcade front (`logo.jpg` too). A transparent PNG suits the blue bar. |
+| `/data/xemu-chihiro/games/covers/` or `/data/xemu-chihiro/covers/` | Covers for the Xbox games and for the dashboard (`XEMU_ARCADE_UI=0`), named after the game's file or its title ID (`4D530064.jpg`). |
+
+Case, spaces and punctuation in a name don't matter, nor anything in `( )` or `[ ]`:
+`Wangan Midnight Maximum Tune 2 (Export).png` is found for `wangmid2` too. New pictures show the
+next time the app starts.
+
 ### Switches: `/data/xemu-chihiro/env.txt`
 
 Written with every switch and a comment the first time the app starts; one `NAME=VALUE` per line,
@@ -81,7 +97,7 @@ As for XPSemu (below); `ps5/build-title.sh` makes `dist/PPSA97372/`. Ship `impor
 
 GPL-2.0, like XPSemu, xemu and QEMU; files under other compatible licenses say so in their headers.
 This fork **does not include** any Sega or Microsoft content: no Chihiro or Xbox BIOS, media board
-firmware, EEPROM, dashboard or game. Use your own dumps.
+firmware, EEPROM, dashboard, game or artwork. Use your own dumps.
 
 ---
 

@@ -34,14 +34,19 @@ ID in their `boot.id`, whatever the file is called, with MAME's names.
   it, Triangle opens the game's settings (its name, a home screen tile),
   Options the emulator's settings (L1 / R1 there: Settings, System).
 - Tiles: a picture per game in `/data/xemu-chihiro/arcade/`, `.png` or
-  `.jpg`, named after the game's MAME set (`wangmid2.jpg`) or its name
-  (`Wangan Midnight Maximum Tune 2.png`); a flyer's shape fits best, any
-  size. A game without one shows its name.
+  `.jpg`, named after the game's MAME set (`wangmid2.jpg`), its name
+  (`Wangan Midnight Maximum Tune 2.png`) or its file's name; a flyer's
+  shape fits best, any size. A game without one shows its name. Case,
+  spaces, punctuation and anything in `( )` or `[ ]` don't matter in the
+  names. None come with the app.
 - Logos: a game's logo in `/data/xemu-chihiro/arcade/logos/`, named as the
   tiles (`wangmid2.png`; a transparent PNG suits the white), shown under
   the row instead of the selected game's name.
 - The Chihiro logo at the top left: `/data/xemu-chihiro/arcade/logo.png`
   (or `.jpg`; a transparent PNG suits the blue bar), fitted into the bar.
+- Covers (the Xbox games, and the dashboard with `XEMU_ARCADE_UI=0`):
+  `/data/xemu-chihiro/games/covers/` or `/data/xemu-chihiro/covers/`, named
+  after the game's file or its title ID.
 - The settings pages (Options, Triangle) open over the same ground in its
   colours, the page's name in the banner and its buttons in the bottom bar.
 
