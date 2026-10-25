@@ -895,7 +895,7 @@ static const char kEnvTemplate[] =
     "XEMU_CHIHIRO_FFB=100\n"
     "#\n"
     "# Gun games (Ghost Squad, Virtua Cop 3, House of the Dead III): the\n"
-    "# crosshair's speed with a mouse and with the right stick, in percent,\n"
+    "# crosshair's speed with a mouse and with the left stick, in percent,\n"
     "# and the crosshair itself (0 = not drawn)\n"
     "XEMU_CHIHIRO_MOUSE_SPEED=100\n"
     "XEMU_CHIHIRO_AIM_SPEED=100\n"

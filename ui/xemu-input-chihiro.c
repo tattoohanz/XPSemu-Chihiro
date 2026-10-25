@@ -25,7 +25,7 @@
  * at a time and leave it there, as the desktop fork does (wmmt_lever).
  *
  * Gun games (Ghost Squad, Virtua Cop 3, The House of the Dead III): a
- * crosshair over the picture, moved by a mouse or the right stick
+ * crosshair over the picture, moved by a mouse or the left stick
  * (gun_inputs, below).
  *
  * This program is free software; you can redistribute it and/or modify
@@ -194,7 +194,7 @@ static void chihiro_ffb_rumble(void)
  *     (Ghost Squad) or the pedal (Virtua Cop 3), a side button reload.
  *     Moved past the picture's edge, the gun is off the picture (a reload),
  *     as on the desktop.
- *   the DualSense: the right stick moves it (finer near the centre). R2 the
+ *   the DualSense: the left stick moves it (finer near the centre). R2 the
  *     trigger, L2 reload (the gun off the picture while held), R1 the body
  *     button, L1 Change or the pedal, Circle card in (Ghost Squad).
  * The aim goes into player 1's analog pair (0/1) as a fraction of the
@@ -259,8 +259,8 @@ static void gun_inputs(ChihiroJVSState *jvs, const ControllerState *pad,
 
     /* The picture is 4:3: the same speed on screen up and down is 4/3 of
      * the fraction. Screen down is positive; xemu's Y axes are up. */
-    float sx = pad ? aim_axis(pad->axis[CONTROLLER_AXIS_RSTICK_X]) : 0.0f;
-    float sy = pad ? -aim_axis(pad->axis[CONTROLLER_AXIS_RSTICK_Y]) : 0.0f;
+    float sx = pad ? aim_axis(pad->axis[CONTROLLER_AXIS_LSTICK_X]) : 0.0f;
+    float sy = pad ? -aim_axis(pad->axis[CONTROLLER_AXIS_LSTICK_Y]) : 0.0f;
     if (sx != 0.0f || sy != 0.0f) {
         float v = stick_pct / 100.0f / AIM_STICK_ACROSS_S * dt;
         g_aim_x = clampf(g_aim_x + sx * v, AIM_STICK_EDGE,
@@ -523,14 +523,14 @@ static const ChihiroControlInfo controls_ok[] = {
 /* gun_inputs: R1 is the gun's body button, L1 the switch Ghost Squad calls
  * Change and Virtua Cop 3 is a pedal (none on The House of the Dead III). */
 static const ChihiroControlInfo controls_hotd3[] = {
-    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_LSTICK, "Move cursor", false },
     { CHIHIRO_CTL_RT, "Trigger", false },
     { CHIHIRO_CTL_LT, "Screen in/out", false },
     { CONTROLLER_BUTTON_BLACK, "Gun button", false },
     SYSTEM_CONTROLS,
 };
 static const ChihiroControlInfo controls_vc3[] = {
-    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_LSTICK, "Move cursor", false },
     { CHIHIRO_CTL_RT, "Trigger", false },
     { CHIHIRO_CTL_LT, "Screen in/out", false },
     { CONTROLLER_BUTTON_BLACK, "Change", false },
@@ -538,7 +538,7 @@ static const ChihiroControlInfo controls_vc3[] = {
     SYSTEM_CONTROLS,
 };
 static const ChihiroControlInfo controls_gs[] = {
-    { CHIHIRO_CTL_RSTICK, "Move cursor", false },
+    { CHIHIRO_CTL_LSTICK, "Move cursor", false },
     { CHIHIRO_CTL_RT, "Trigger", false },
     { CHIHIRO_CTL_LT, "Screen in/out", false },
     { CONTROLLER_BUTTON_BLACK, "Gun button", false },

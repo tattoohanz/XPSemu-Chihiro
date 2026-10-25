@@ -107,7 +107,7 @@ remapped). As they come:
 
 | DualSense | Ghost Squad | Virtua Cop 3 | The House of the Dead III |
 |---|---|---|---|
-| Right stick | Move cursor | Move cursor | Move cursor |
+| Left stick | Move cursor | Move cursor | Move cursor |
 | R2 | Trigger | Trigger | Trigger |
 | L2 | Screen in / out | Screen in / out | Screen in / out |
 | R1 | Gun button | Change | Gun button |

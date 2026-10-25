@@ -6817,8 +6817,8 @@ static int ChihiroControlXbox(uint32_t control)
     case CHIHIRO_CTL_LT: return XB_LT;
     case CHIHIRO_CTL_RT: return XB_RT;
     case CHIHIRO_CTL_LSTICK_X:
-    case CHIHIRO_CTL_LSTICK_Y: return XB_LSTICK;
-    case CHIHIRO_CTL_RSTICK: return XB_RSTICK;
+    case CHIHIRO_CTL_LSTICK_Y:
+    case CHIHIRO_CTL_LSTICK: return XB_LSTICK;
     default: return -1;
     }
 }
@@ -6920,9 +6920,9 @@ void DashboardScene::DrawControlsPage(float s, float a)
         case CHIHIRO_CTL_RT: return pad->axis[CONTROLLER_AXIS_RTRIG] > 16000;
         case CHIHIRO_CTL_LSTICK_X: return far(pad->axis[CONTROLLER_AXIS_LSTICK_X]);
         case CHIHIRO_CTL_LSTICK_Y: return far(pad->axis[CONTROLLER_AXIS_LSTICK_Y]);
-        case CHIHIRO_CTL_RSTICK:
-            return far(pad->axis[CONTROLLER_AXIS_RSTICK_X]) ||
-                   far(pad->axis[CONTROLLER_AXIS_RSTICK_Y]);
+        case CHIHIRO_CTL_LSTICK:
+            return far(pad->axis[CONTROLLER_AXIS_LSTICK_X]) ||
+                   far(pad->axis[CONTROLLER_AXIS_LSTICK_Y]);
         default: return (pad->buttons & control) != 0;
         }
     };
@@ -6983,10 +6983,10 @@ void DashboardScene::DrawControlsPage(float s, float a)
             // stick as it is (sticks aren't remapped).
             bool ways = ctl == CHIHIRO_CTL_LSTICK_X ||
                         ctl == CHIHIRO_CTL_LSTICK_Y;
-            const char *src = ctl == CHIHIRO_CTL_RSTICK ? "Right stick" :
-                              ways ? "Left stick" :
-                                     xemu_ps5_source_name(
-                                         xemu_ps5_map_get(col[k].xb));
+            const char *src = ways || ctl == CHIHIRO_CTL_LSTICK ?
+                                  "Left stick" :
+                                  xemu_ps5_source_name(
+                                      xemu_ps5_map_get(col[k].xb));
             float arrow = ways ? 34 * s : 0;
             ImVec2 ss = TextSize(small, 30 * s, src);
             ImU32 src_col = info->system ? Soft(a * 0.9f) : Lime(a);

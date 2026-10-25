@@ -186,7 +186,7 @@ enum {
     CHIHIRO_CTL_RT = 1 << 17,
     CHIHIRO_CTL_LSTICK_X = 1 << 18, // Left and right
     CHIHIRO_CTL_LSTICK_Y = 1 << 19, // Up and down
-    CHIHIRO_CTL_RSTICK = 1 << 20,   // Every way
+    CHIHIRO_CTL_LSTICK = 1 << 20,   // Every way
 };
 typedef struct ChihiroControlInfo {
     uint32_t control;
