@@ -49,6 +49,7 @@ read at startup.
 | Switch | Default | What it does |
 |---|---|---|
 | `XEMU_WM1_*`, `XEMU_WM2_*` | 1 | Maximum Tune 1/2 export Gemballa patches (only on the export `V307.xbe` / `V322.xbe`). |
+| `XEMU_WM1_WIDESCREEN`, `XEMU_WM2_WIDESCREEN` | 0 | Maximum Tune 1/2 export draws 16:9 itself (its camera, in memory); give the game the 16:9 screen shape, `XEMU_WS_HACK` 0. |
 | `XEMU_WS_HACK` | 0 | 16:9 for the Chihiro games; set the game's screen shape to 16:9 too. |
 | `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`, `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` | 1, 1, 26, 1, 0 | With `XEMU_WS_HACK=1`: the copy-pass fix, the HUD at the 16:9 edges, 4:3 menus, the menu background. |
 | `XEMU_DEPTH_READ_LAG` | 1 | Xbox CPU reads of a depth buffer take the last readback instead of waiting for the GPU. |

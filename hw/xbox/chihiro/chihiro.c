@@ -3197,23 +3197,28 @@ static void chihiro_patch_wm2_kijima(void)
                         "rival 0x23 -> 0x22)");
 }
 
-/* Maximum Tune 1/2 EXPORT widescreen, step 1: log only, nothing is written.
+/* HACK, opt-in with XEMU_WM2_WIDESCREEN=1 (V322.xbe) or
+ * XEMU_WM1_WIDESCREEN=1 (V307.xbe): Maximum Tune 1/2 EXPORT draws 16:9.
  * The game's camera (a wrapper around RenderWare's RwCamera: frame buffer
  * raster at +0x60, view window at +0x68) sets the view window each frame
  * from its field of view and aspect (mulss at V322 0x5E8DE, V307 0x78C78):
  *   x = fov * 1/90, y = x / aspect
  * and the aspect is the constructor's 4/3 (V322 0x5E798, V307 0x78B48).
- * Each of the two constants has that one reader in the game. A patch would
- * put 16/9 and 1/67.5 there: x grows by 4/3 and y stays (Hor+), and
- * RenderWare builds its frustum, which culls, from the same window, so the
- * sides get drawn rather than just uncovered. The main camera is a global
- * (V322 0x31A910, V307 0x234820), applied to the screen's RwCamera; the
- * mirror has its own camera, from the same constructor, on a 256x128
- * raster. This checks the constants once, then logs both cameras at most
- * every 2 s while something changes, to see on the console which camera
- * draws what. */
+ * Each of the two constants has that one reader in the game; 16/9 and
+ * 1/67.5 there make x 4/3 wider and keep y (Hor+), and RenderWare builds
+ * its frustum, which culls, from the same window, so the sides are drawn
+ * by the game rather than just uncovered. Data only, both constants or
+ * neither, export build only, in memory only; the 640x480 picture is then
+ * shown 16:9 (the game's Screen shape setting), the 2D on it widened. The
+ * main camera is a global (V322 0x31A910, V307 0x234820), built before the
+ * patch can be applied, so its aspect is set too when it still holds 4/3.
+ * The log on the console showed it applied to the screen's RwCamera (640x480
+ * raster, the same window); the mirror's RwCamera (256x128) kept a 1 x 1
+ * window, so it is not set from these. Whether patched or not, both cameras
+ * are logged at most every 2 s while something changes. */
 typedef struct {
     const char *xbe;
+    const char *env;            /* the opt-in */
     uint32_t    region_va;      /* 2: export */
     uint32_t    aspect_va;      /* 4/3 */
     uint32_t    scale_va;       /* 1/90 */
@@ -3225,10 +3230,32 @@ typedef struct {
 } ChihiroWmCameras;
 
 static const ChihiroWmCameras chihiro_wm_cameras[] = {
-    { "V322.xbe", WM2_REGION_VA, 0x001FA480u, 0x001FA48Cu, 0x0031A910u,
-      0x002A8488u, 0x0031E8F8u, 0x0031E8F4u, "WM2" },
-    { "V307.xbe", WM1_REGION_VA, 0x001B6618u, 0x001B6620u, 0x00234820u,
-      0x00247930u, 0x0022DFBCu, 0x0022DFB8u, "WM1" },
+    { "V322.xbe", "XEMU_WM2_WIDESCREEN", WM2_REGION_VA, 0x001FA480u,
+      0x001FA48Cu, 0x0031A910u, 0x002A8488u, 0x0031E8F8u, 0x0031E8F4u, "WM2" },
+    { "V307.xbe", "XEMU_WM1_WIDESCREEN", WM1_REGION_VA, 0x001B6618u,
+      0x001B6620u, 0x00234820u, 0x00247930u, 0x0022DFBCu, 0x0022DFB8u, "WM1" },
+};
+
+/* The two constants and what lies between them: 4/3, (20000.0,) 45.0, 1/90 */
+static const uint8_t wm2_ws_e[] = {
+    0xAB, 0xAA, 0xAA, 0x3F, 0x00, 0x40, 0x9C, 0x46,
+    0x00, 0x00, 0x34, 0x42, 0x61, 0x0B, 0x36, 0x3C
+};
+static const uint8_t wm2_ws_r[] = {
+    0x39, 0x8E, 0xE3, 0x3F, 0x00, 0x40, 0x9C, 0x46,
+    0x00, 0x00, 0x34, 0x42, 0xD6, 0xB9, 0x72, 0x3C
+};
+static const uint8_t wm1_ws_e[] = {
+    0xAB, 0xAA, 0xAA, 0x3F, 0x00, 0x00, 0x34, 0x42, 0x61, 0x0B, 0x36, 0x3C
+};
+static const uint8_t wm1_ws_r[] = {
+    0x39, 0x8E, 0xE3, 0x3F, 0x00, 0x00, 0x34, 0x42, 0xD6, 0xB9, 0x72, 0x3C
+};
+static const ChihiroBytePatch wm2_ws[] = {
+    { 0x001FA480u, wm2_ws_e, wm2_ws_r, sizeof(wm2_ws_e) },
+};
+static const ChihiroBytePatch wm1_ws[] = {
+    { 0x001B6618u, wm1_ws_e, wm1_ws_r, sizeof(wm1_ws_e) },
 };
 
 #define CHIHIRO_WM_ASPECT_43  0x3FAAAAABu   /* 4/3 */
@@ -3248,6 +3275,7 @@ typedef struct {
 } ChihiroWmCamView;
 
 static const ChihiroWmCameras *chihiro_wm_game;
+static float chihiro_wm_scale = 1 / 90.0f; /* the game's, as checked */
 static ChihiroWmCamView chihiro_wm_last[2];
 static int64_t chihiro_wm_last_ms;
 static int chihiro_wm_lines;
@@ -3304,7 +3332,8 @@ static int chihiro_wm_view_str(char *out, size_t n, const char *name,
     if (v->cam) {
         len += snprintf(out + len, n - len, " fov %.2f aspect %.4f "
                         "(window %.4f x %.4f)", v->fov, v->aspect,
-                        v->fov / 90.0f, v->fov / 90.0f / v->aspect);
+                        v->fov * chihiro_wm_scale,
+                        v->fov * chihiro_wm_scale / v->aspect);
     } else {
         len += snprintf(out + len, n - len, " camera none");
     }
@@ -3322,11 +3351,14 @@ static void chihiro_wm_ws_check(void)
 {
     const char *base = chihiro_game_filename;
     const ChihiroWmCameras *g = NULL;
-    uint8_t reg[4], a[4], k[4];
+    uint8_t reg[4], a[4], k[4], m[4];
+    const char *env;
+    bool on;
 
     chihiro_wm_game = NULL;
     chihiro_wm_lines = 0;
     chihiro_wm_last_ms = 0;
+    chihiro_wm_scale = 1 / 90.0f;
     memset(chihiro_wm_last, 0, sizeof(chihiro_wm_last));
     for (const char *c = chihiro_game_filename; *c; c++) {
         if (*c == '\\' || *c == '/') {
@@ -3341,26 +3373,48 @@ static void chihiro_wm_ws_check(void)
     if (!g) {
         return;
     }
+    env = getenv(g->env);
+    on = env && strcmp(env, "1") == 0;
+    if (g == &chihiro_wm_cameras[0]) {
+        chihiro_patch_group(g->env, g->xbe, g->region_va, 2, wm2_ws,
+                            ARRAY_SIZE(wm2_ws), "WM2 WIDESCREEN",
+                            "draws 16:9: aspect 16/9 at 001FA480, fov scale "
+                            "1/67.5 at 001FA48C (Hor+)");
+    } else {
+        chihiro_patch_group(g->env, g->xbe, g->region_va, 2, wm1_ws,
+                            ARRAY_SIZE(wm1_ws), "WM1 WIDESCREEN",
+                            "draws 16:9: aspect 16/9 at 001B6618, fov scale "
+                            "1/67.5 at 001B6620 (Hor+)");
+    }
     if (!chihiro_guest_rw(g->region_va, reg, sizeof(reg), false) ||
         !chihiro_guest_rw(g->aspect_va, a, sizeof(a), false) ||
-        !chihiro_guest_rw(g->scale_va, k, sizeof(k), false)) {
-        fprintf(stderr, "Chihiro: %s widescreen (log only): %s is not mapped "
-                "yet\n", g->tag, g->xbe);
-        return;
+        !chihiro_guest_rw(g->scale_va, k, sizeof(k), false) ||
+        ldl_le_p(reg) != 2) {
+        return; /* chihiro_patch_group said why, when it was asked */
     }
-    if (ldl_le_p(reg) != 2) {
-        fprintf(stderr, "Chihiro: %s widescreen (log only): region word %u, "
-                "not the export build, left alone\n", g->tag, ldl_le_p(reg));
+    if (ldl_le_p(a) == CHIHIRO_WM_ASPECT_169 &&
+        ldl_le_p(k) == CHIHIRO_WM_SCALE_675) {
+        /* Patched: the main camera was built from the old 4/3 */
+        if (chihiro_guest_rw(g->main_cam + 0x2C, m, sizeof(m), false) &&
+            ldl_le_p(m) == CHIHIRO_WM_ASPECT_43) {
+            stl_le_p(m, CHIHIRO_WM_ASPECT_169);
+            if (chihiro_guest_rw(g->main_cam + 0x2C, m, sizeof(m), true)) {
+                fprintf(stderr, "Chihiro: HACK, %s main camera's aspect 4/3 "
+                        "-> 16/9 too (%08X)\n", g->xbe, g->main_cam + 0x2C);
+            }
+        }
+    } else if (ldl_le_p(a) != CHIHIRO_WM_ASPECT_43 ||
+               ldl_le_p(k) != CHIHIRO_WM_SCALE_90) {
+        fprintf(stderr, "Chihiro: %s widescreen: %08X holds %08X, %08X holds "
+                "%08X: not this game's, the cameras are not logged\n", g->tag,
+                g->aspect_va, ldl_le_p(a), g->scale_va, ldl_le_p(k));
         return;
+    } else {
+        fprintf(stderr, "Chihiro: %s widescreen %s (%s=1 in env.txt for "
+                "16:9)\n", g->tag, on ? "NOT applied (see above)" : "off",
+                g->env);
     }
-    fprintf(stderr, "Chihiro: %s widescreen (log only): %08X aspect %.4f "
-            "(%08X, %s), %08X fov scale %.6f (%08X, %s); a patch would write "
-            "%08X (16/9) and %08X (1/67.5)\n", g->tag,
-            g->aspect_va, chihiro_ldf(a), ldl_le_p(a),
-            ldl_le_p(a) == CHIHIRO_WM_ASPECT_43 ? "as expected" : "UNEXPECTED",
-            g->scale_va, chihiro_ldf(k), ldl_le_p(k),
-            ldl_le_p(k) == CHIHIRO_WM_SCALE_90 ? "as expected" : "UNEXPECTED",
-            CHIHIRO_WM_ASPECT_169, CHIHIRO_WM_SCALE_675);
+    chihiro_wm_scale = chihiro_ldf(k);
     chihiro_wm_game = g;
 }
 

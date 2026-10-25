@@ -841,6 +841,12 @@ static const char kEnvTemplate[] =
     "XEMU_WM2_BLACKBIRD_RIVAL=1\n"
     "XEMU_WM2_KIJIMA=1\n"
     "#\n"
+    "# Maximum Tune 1/2 export: the game itself draws 16:9, its camera wider\n"
+    "# (in memory, only on V307.xbe / V322.xbe; 0 = 4:3). Give the game the\n"
+    "# 16:9 screen shape (Triangle on it) and leave XEMU_WS_HACK at 0 for it.\n"
+    "XEMU_WM1_WIDESCREEN=0\n"
+    "XEMU_WM2_WIDESCREEN=0\n"
+    "#\n"
     "# 16:9 widescreen for the Chihiro games (1 = on); set the screen shape\n"
     "# to 16:9 too. With it, as the desktop build's .bat: the copy-pass fix,\n"
     "# the HUD out to the 16:9 edges (within EDGE percent of an edge), the\n"
@@ -897,7 +903,7 @@ static const char kEnvTemplate[] =
     "# (to the end of the file or the next [name]). E.g. 16:9 for Maximum\n"
     "# Tune 2 alone:\n"
     "#[wangmid2]\n"
-    "#XEMU_WS_HACK=1\n";
+    "#XEMU_WM2_WIDESCREEN=1\n";
 
 /*
  * env.txt's switches. The link wraps getenv (ps5/build-title.sh): a name set

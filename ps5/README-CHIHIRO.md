@@ -46,6 +46,10 @@ Written the first time the app starts; NAME=VALUE per line, read at startup.
 
 - `XEMU_WM1_*`, `XEMU_WM2_*`: the Maximum Tune export Gemballa patches
   (in memory; only on V307.xbe / V322.xbe export). On by default.
+- `XEMU_WM1_WIDESCREEN=1`, `XEMU_WM2_WIDESCREEN=1`: Maximum Tune 1/2 export
+  draws 16:9 itself (its camera's aspect and field of view, in memory), so
+  the sides are drawn by the game. Give the game the 16:9 screen shape and
+  leave `XEMU_WS_HACK` at 0 for it. Off by default.
 - `XEMU_WS_HACK=1`: 16:9 for the Chihiro games; set the game's screen shape
   to 16:9 too. `XEMU_WS_COPY`, `XEMU_WS_HUD`, `XEMU_WS_HUD_EDGE`,
   `XEMU_WS_MENU43`, `XEMU_WS_MENUBG` tune it (as the desktop build's .bat).
