@@ -33,7 +33,8 @@ ID in their `boot.id`, whatever the file is called, with MAME's names.
   to the game running), Circle goes back to the game running, Square ends
   it, Triangle opens the game's settings (its name, a home screen tile),
   Options the emulator's settings (L1 / R1 there: Settings, System),
-  D-pad down the game's controls (left / right there: the other games').
+  D-pad down the game's controls (the right stick there: the other games';
+  every other button lights up on the pad, to try it).
 - Tiles: a picture per game in `/data/xemu-chihiro/arcade/`, `.png` or
   `.jpg`, named after the game's MAME set (`wangmid2.jpg`), its name
   (`Wangan Midnight Maximum Tune 2.png`) or its file's name; a flyer's

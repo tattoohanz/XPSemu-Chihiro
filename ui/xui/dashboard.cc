@@ -3921,18 +3921,17 @@ void DashboardScene::HandleInputInner()
     }
 
     if (m_in_page && m_controls_page) {
-        // XPSemu Chihiro: a game's controls. Left and right (L1, R1 five at
-        // a time) show the other games', Circle goes back to the front.
+        // XPSemu Chihiro: a game's controls. The right stick (no game reads
+        // it) shows the other games'; every other control only lights up on
+        // the pad, as the game would get it. Circle goes back to the front.
         int n = m_games.size();
         if (back || !n) {
             m_in_page = false; // The page stays while it slides away
             return;
         }
         int was = m_game;
-        if (left) m_game = std::max(m_game - 1, 0);
-        if (right) m_game = std::min(m_game + 1, n - 1);
-        if (l1) m_game = std::max(m_game - 5, 0);
-        if (r1) m_game = std::min(m_game + 5, n - 1);
+        if (key(ImGuiKey_GamepadRStickLeft)) m_game = std::max(m_game - 1, 0);
+        if (key(ImGuiKey_GamepadRStickRight)) m_game = std::min(m_game + 1, n - 1);
         if (m_game != was) {
             ControlsLog();
         }
@@ -7406,7 +7405,7 @@ void DashboardScene::DrawHints(float s)
         }
     } else {
         if (m_controls_page) {
-            hints.push_back({ GLYPH_LSTICK, "Other games" });
+            hints.push_back({ GLYPH_RSTICK, "Other games" });
         } else if (m_gs_open && m_kb_open) {
             hints.push_back({ GLYPH_CROSS, "Type" });
             hints.push_back({ GLYPH_SQUARE, "Delete" });
