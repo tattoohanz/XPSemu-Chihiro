@@ -6792,10 +6792,12 @@ void DashboardScene::DrawPadPage(float s, float a)
 }
 
 //
-// XPSemu Chihiro: a game's controls (D-pad down on the arcade front): the
-// controller of Settings > Controller, each control the game reads called
-// out with what it does there and the DualSense button it comes from now.
-// xemu-input-chihiro.c has the rows, beside the layouts themselves.
+// XPSemu Chihiro: a game's controls (D-pad down on the arcade front): a
+// pad in the PlayStation layout (a plain drawing, not the DualSense's own
+// look), each control the game reads called out with what it does there,
+// at the DualSense button it comes from now (Settings > Controller's
+// remap; the sticks as they are). xemu-input-chihiro.c has the rows,
+// beside the layouts themselves.
 //
 
 // The Xbox control a row points at (XB_*), or -1.
@@ -6823,17 +6825,87 @@ static int ChihiroControlXbox(uint32_t control)
     }
 }
 
-// Its column (Settings > Controller's) and its place in it.
-static int ChihiroControlSlot(int xb, bool *right)
+// Where a DualSense control (PS5_SRC_*) is on the page's pad, around c.
+static ImVec2 PsPadAnchor(ImVec2 c, float s, int source)
 {
-    for (int i = 0; i < 8; i++) {
-        if (kPadLeft[i] == xb || kPadRight[i] == xb) {
-            *right = kPadRight[i] == xb;
-            return i;
-        }
+    auto at = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
+    switch (source) {
+    case PS5_SRC_CROSS: return at(150, 10);     case PS5_SRC_CIRCLE: return at(190, -30);
+    case PS5_SRC_SQUARE: return at(110, -30);   case PS5_SRC_TRIANGLE: return at(150, -70);
+    case PS5_SRC_L1: return at(-175, -124);     case PS5_SRC_R1: return at(175, -124);
+    case PS5_SRC_L2: return at(-175, -157);     case PS5_SRC_R2: return at(175, -157);
+    case PS5_SRC_L3: return at(-82, 48);        case PS5_SRC_R3: return at(82, 48);
+    case PS5_SRC_OPTIONS: return at(118, -92);  case PS5_SRC_CREATE: return at(-118, -92);
+    case PS5_SRC_UP: return at(-150, -60);      case PS5_SRC_DOWN: return at(-150, 0);
+    case PS5_SRC_LEFT: return at(-180, -30);    default: return at(-120, -30);
     }
-    *right = true;
-    return 8;
+}
+
+// Its half of the pad, for the column its callout goes in.
+static bool PsPadLeftHalf(int source)
+{
+    switch (source) {
+    case PS5_SRC_L1: case PS5_SRC_L2: case PS5_SRC_L3: case PS5_SRC_CREATE:
+    case PS5_SRC_UP: case PS5_SRC_DOWN: case PS5_SRC_LEFT: case PS5_SRC_RIGHT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The pad: shoulders and grips behind the body, the touchpad, the D-pad,
+// the face buttons (the dashboard's glyphs), the sticks; its outline in
+// the accent colour as Settings > Controller's.
+static void DrawPsPad(ImDrawList *dl, ImVec2 c, float s, float a)
+{
+    auto at = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
+    ImU32 part = Rgba(52, 59, 66, a);
+    for (int pass = 0; pass < 2; pass++) {
+        float g = pass ? 0 : 4;
+        ImU32 col = pass ? Rgba(30, 35, 40, a) : Lime(a * 0.75f);
+        for (int side = -1; side <= 1; side += 2) {
+            dl->AddRectFilled(at(side * 175 - 52 - g, -174 - g),
+                              at(side * 175 + 52 + g, -138 + g), col, (16 + g) * s);
+            dl->AddRectFilled(at(side * 175 - 56 - g, -136 - g),
+                              at(side * 175 + 56 + g, -112 + g), col, (11 + g) * s);
+            dl->AddEllipseFilled(at(side * 178, 88), ImVec2((82 + g) * s, (138 + g) * s),
+                                 col, side * -0.314f, 48);
+        }
+        dl->AddRectFilled(at(-245 - g, -118 - g), at(245 + g, 50 + g), col,
+                          (58 + g) * s);
+    }
+    for (int side = -1; side <= 1; side += 2) { // L2/R2 and L1/R1
+        dl->AddRectFilled(at(side * 175 - 52, -174), at(side * 175 + 52, -138),
+                          part, 16 * s);
+        dl->AddRectFilled(at(side * 175 - 56, -136), at(side * 175 + 56, -112),
+                          part, 11 * s);
+    }
+    dl->AddRectFilled(at(-92, -104), at(92, -16), Rgba(42, 48, 54, a), 14 * s);
+    dl->AddRect(at(-92, -104), at(92, -16), Line(a), 14 * s, 0, 1.5f * s);
+    for (int source : { PS5_SRC_CREATE, PS5_SRC_OPTIONS }) {
+        ImVec2 m = PsPadAnchor(c, s, source);
+        dl->AddRectFilled(ImVec2(m.x - 7 * s, m.y - 13 * s),
+                          ImVec2(m.x + 7 * s, m.y + 13 * s), part, 7 * s);
+    }
+    dl->AddRectFilled(at(-162, -72), at(-138, 12), part, 5 * s);
+    dl->AddRectFilled(at(-192, -42), at(-108, -18), part, 5 * s);
+    const struct { int source; Glyph glyph; } face[] = {
+        { PS5_SRC_TRIANGLE, GLYPH_TRIANGLE }, { PS5_SRC_CIRCLE, GLYPH_CIRCLE },
+        { PS5_SRC_CROSS, GLYPH_CROSS },       { PS5_SRC_SQUARE, GLYPH_SQUARE },
+    };
+    for (const auto &f : face) {
+        ImVec2 m = PsPadAnchor(c, s, f.source);
+        dl->AddCircleFilled(m, 20 * s, part, 24);
+        DrawGlyph(dl, m, 17 * s, f.glyph, a);
+    }
+    for (int source : { PS5_SRC_L3, PS5_SRC_R3 }) {
+        ImVec2 m = PsPadAnchor(c, s, source);
+        dl->AddCircleFilled(m, 40 * s, Rgba(14, 17, 20, a), 32);
+        dl->AddCircleFilled(m, 28 * s, part, 32);
+        dl->AddCircle(m, 28 * s, Line(a), 32, 2 * s);
+    }
+    dl->AddCircleFilled(at(0, 20), 11 * s, part, 20);
+    dl->AddCircle(at(0, 20), 11 * s, Line(a), 20, 1.5f * s);
 }
 
 // A small double arrow, the way a stick moves: across or up and down.
@@ -6905,7 +6977,7 @@ void DashboardScene::DrawControlsPage(float s, float a)
     const ChihiroControlInfo *rows;
     int n = xemu_chihiro_controls(profile, &rows);
 
-    DrawXboxPad(dl, c, s, a);
+    DrawPsPad(dl, c, s, a);
 
     // Pressed now, as the game gets it (the DualSense, remapped): lit, as
     // on Settings > Controller.
@@ -6927,29 +6999,34 @@ void DashboardScene::DrawControlsPage(float s, float a)
         }
     };
 
-    // The rows by column, in Settings > Controller's order, each column
-    // centred on the controller.
+    // The rows by the DualSense control each comes from: the column on its
+    // half of the pad, top to bottom as they are on it (so the lines don't
+    // cross), each column centred on the pad.
     struct Row {
         const ChihiroControlInfo *info;
-        int xb, slot;
+        int xb, source;
+        ImVec2 to;
     };
     std::vector<Row> side[2];
     bool laid_out = false;
     for (int i = 0; i < n; i++) {
-        int xb = ChihiroControlXbox(rows[i].control);
+        uint32_t ctl = rows[i].control;
+        int xb = ChihiroControlXbox(ctl);
         if (xb < 0) {
             continue;
         }
-        bool right;
-        int slot = ChihiroControlSlot(xb, &right);
-        side[right].push_back({ &rows[i], xb, slot });
+        bool stick = ctl == CHIHIRO_CTL_LSTICK_X ||
+                     ctl == CHIHIRO_CTL_LSTICK_Y || ctl == CHIHIRO_CTL_LSTICK;
+        int source = stick ? PS5_SRC_L3 : xemu_ps5_map_get(xb);
+        side[!PsPadLeftHalf(source)].push_back(
+            { &rows[i], xb, source, PsPadAnchor(c, s, source) });
         laid_out |= !rows[i].system;
     }
     float bw = 440 * s, bh = 56 * s, gap = 70 * s;
     for (int r = 0; r < 2; r++) {
         std::vector<Row> &col = side[r];
         std::stable_sort(col.begin(), col.end(),
-                         [](const Row &p, const Row &q) { return p.slot < q.slot; });
+                         [](const Row &p, const Row &q) { return p.to.y < q.to.y; });
         float bx = r ? size.x - 120 * s - bw + slide : 120 * s + slide;
         float y0 = c.y - ((int)col.size() - 1) * gap / 2 - bh / 2;
         for (size_t k = 0; k < col.size(); k++) {
@@ -6959,7 +7036,7 @@ void DashboardScene::DrawControlsPage(float s, float a)
             ImVec2 p0(bx, by), p1(bx + bw, by + bh);
             // The line to the control, dashed.
             ImVec2 from(r ? p0.x : p1.x, by + bh / 2);
-            ImVec2 to = XboxPadAnchor(c, s, col[k].xb);
+            ImVec2 to = col[k].to;
             float len = sqrtf((to.x - from.x) * (to.x - from.x) +
                               (to.y - from.y) * (to.y - from.y));
             for (float d = 0; d < len; d += 12 * s) {
@@ -6979,14 +7056,12 @@ void DashboardScene::DrawControlsPage(float s, float a)
             Bar(dl, p0, p1, s, false, a);
             Text(dl, small, 30 * s, ImVec2(bx + 26 * s, by + 12 * s),
                  info->system ? Soft(a) : Label(a), info->function);
-            // The DualSense's: a button as Settings > Controller has it, a
-            // stick as it is (sticks aren't remapped).
+            // The DualSense control's name (a stick's, not its click's).
             bool ways = ctl == CHIHIRO_CTL_LSTICK_X ||
                         ctl == CHIHIRO_CTL_LSTICK_Y;
             const char *src = ways || ctl == CHIHIRO_CTL_LSTICK ?
                                   "Left stick" :
-                                  xemu_ps5_source_name(
-                                      xemu_ps5_map_get(col[k].xb));
+                                  xemu_ps5_source_name(col[k].source);
             float arrow = ways ? 34 * s : 0;
             ImVec2 ss = TextSize(small, 30 * s, src);
             ImU32 src_col = info->system ? Soft(a * 0.9f) : Lime(a);
